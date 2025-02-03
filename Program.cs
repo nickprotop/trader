@@ -27,6 +27,9 @@ internal class Program
 	private static decimal balance = 10000m; // Starting balance
 	private static Dictionary<string, decimal> portfolio = new Dictionary<string, decimal>();
 	private static Dictionary<string, decimal> initialInvestments = new Dictionary<string, decimal>();
+	private static Dictionary<string, decimal> totalQuantityPerCoin = new Dictionary<string, decimal>();
+	private static Dictionary<string, decimal> totalCostPerCoin = new Dictionary<string, decimal>();
+
 
 	private static bool IsConsoleAvailable()
     {
@@ -45,41 +48,56 @@ internal class Program
 	{
 		bool clearPreviousTransactions = args.Contains("-c");
 
-        // Do not load previous transactions
+		// Do not load previous transactions
 		InitializeDatabase(true);
 		ShowDatabaseStats();
 
-        bool firstRun = true;
+		bool firstRun = true;
 
 		int analysisWindowSeconds = customIntervalSeconds * customPeriods;
+
+		DateTime nextIterationTime = DateTime.UtcNow;
 
 		try
 		{
 			while (true)
 			{
+				// Check for console input
 				if (Console.KeyAvailable)
 				{
 					var key = Console.ReadKey(intercept: true);
 					if (key.Key == ConsoleKey.C)
 					{
 						ResetDatabase();
-                        firstRun = true;
+						firstRun = true;
 						continue;
 					}
 				}
 
-                if (firstRun)
-                {
-                    PrintProgramParameters();
-                    firstRun = false;
-                }
+				if (firstRun)
+				{
+					PrintProgramParameters();
+					firstRun = false;
+				}
 
-				var prices = await GetCryptoPrices();
-				StoreIndicatorsInDatabase(prices);
-				AnalyzeIndicators(prices, customPeriods, analysisWindowSeconds);
-				ShowBalance(prices);
-				Console.WriteLine($"\n=== Waiting {customIntervalSeconds} seconds before next period... ===");
-				await Task.Delay(customIntervalSeconds * 1000);
+				// Check if it's time for the next iteration
+				if (DateTime.UtcNow >= nextIterationTime)
+				{
+					var prices = await GetCryptoPrices();
+					StoreIndicatorsInDatabase(prices);
+					AnalyzeIndicators(prices, customPeriods, analysisWindowSeconds);
+					ShowBalance(prices);
+					ShowTransactionHistory();
+
+					// Update the next iteration time
+					nextIterationTime = DateTime.UtcNow.AddSeconds(customIntervalSeconds);
+					Console.WriteLine($"\n=== Next update in {customIntervalSeconds} seconds... ===");
+				}
+				else
+				{
+					// Optionally, you can sleep for a short duration to prevent CPU overuse
+					await Task.Delay(100); // Sleep for 100 milliseconds
+				}
 			}
 		}
 		catch (Exception ex)
@@ -178,15 +196,16 @@ internal class Program
                 macd DECIMAL(18,8),
                 timestamp DATETIME DEFAULT (datetime('now', 'utc'))
             );
-            CREATE TABLE IF NOT EXISTS Transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                quantity DECIMAL(18,8) NOT NULL,
-                price DECIMAL(18,8) NOT NULL,
-                balance DECIMAL(18,8) NOT NULL,
-                timestamp DATETIME DEFAULT (datetime('now', 'utc'))
-            );";
+			CREATE TABLE IF NOT EXISTS Transactions (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				type TEXT NOT NULL,
+				name TEXT NOT NULL,
+				quantity DECIMAL(18,8) NOT NULL,
+				price DECIMAL(18,8) NOT NULL,
+				balance DECIMAL(18,8) NOT NULL,
+				gain_loss DECIMAL(18,8),
+				timestamp DATETIME DEFAULT (datetime('now', 'utc'))
+			);";
 			using (var cmd = new SQLiteCommand(createTableQuery, conn))
 			{
 				cmd.ExecuteNonQuery();
@@ -269,9 +288,30 @@ internal class Program
 					}
 				}
 			}
+
+			// Load total quantity and cost for cost basis calculations
+			string costBasisQuery = @"
+			SELECT name,
+				SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS totalQuantity,
+				SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE -quantity * price END) AS totalCost
+			FROM Transactions
+			GROUP BY name;";
+			using (var costBasisCmd = new SQLiteCommand(costBasisQuery, conn))
+			{
+				using (var reader = costBasisCmd.ExecuteReader())
+				{
+					while (reader.Read())
+					{
+						string name = reader.GetString(0);
+						decimal totalQuantity = reader.GetDecimal(1);
+						decimal totalCost = reader.GetDecimal(2);
+						totalQuantityPerCoin[name] = totalQuantity;
+						totalCostPerCoin[name] = totalCost;
+					}
+				}
+			}
 		}
 	}
-
 
 	private static async Task<Dictionary<string, decimal>> GetCryptoPrices()
     {
@@ -351,28 +391,34 @@ internal class Program
 		{
 			balance -= cost;
 
+			// Update portfolio
 			if (portfolio.ContainsKey(coinName))
-			{
 				portfolio[coinName] += amountToBuy;
-			}
 			else
-			{
 				portfolio[coinName] = amountToBuy;
-			}
 
+			// Update initial investments
 			if (initialInvestments.ContainsKey(coinName))
-			{
 				initialInvestments[coinName] += cost;
+			else
+				initialInvestments[coinName] = cost;
+
+			// Update total quantity and cost for cost basis calculation
+			if (totalQuantityPerCoin.ContainsKey(coinName))
+			{
+				totalQuantityPerCoin[coinName] += amountToBuy;
+				totalCostPerCoin[coinName] += cost;
 			}
 			else
 			{
-				initialInvestments[coinName] = cost;
+				totalQuantityPerCoin[coinName] = amountToBuy;
+				totalCostPerCoin[coinName] = cost;
 			}
 
-			Console.WriteLine($"Bought {amountToBuy} of {coinName} at {price} each. New balance: {balance}");
+			Console.WriteLine($"Bought {amountToBuy} of {coinName} at {price} each. New balance: {balance:C}");
 
 			// Record the transaction in the database
-			RecordTransaction("BUY", coinName, amountToBuy, price, balance);
+			RecordTransaction("BUY", coinName, amountToBuy, price, balance, null);
 		}
 		else
 		{
@@ -380,20 +426,33 @@ internal class Program
 		}
 	}
 
-
 	private static void SimulateSell(string coinName, decimal price)
 	{
 		if (portfolio.ContainsKey(coinName) && portfolio[coinName] > 0)
 		{
-			decimal quantity = portfolio[coinName];
-			decimal amountToSell = quantity * price;
+			decimal quantityToSell = portfolio[coinName];
+			decimal amountToSell = quantityToSell * price;
 
+			// Calculate average cost basis
+			decimal averageCostBasis = totalCostPerCoin[coinName] / totalQuantityPerCoin[coinName];
+			decimal costOfSoldCoins = averageCostBasis * quantityToSell;
+
+			// Calculate gain or loss
+			decimal gainOrLoss = amountToSell - costOfSoldCoins;
+
+			// Update balance and portfolio
 			balance += amountToSell;
 			portfolio[coinName] = 0;
-			Console.WriteLine($"Sold {quantity} of {coinName} at {price} each. New balance: {balance}");
 
-			// Record the transaction in the database
-			RecordTransaction("SELL", coinName, quantity, price, balance);
+			// Update total quantity and cost
+			totalQuantityPerCoin[coinName] -= quantityToSell;
+			totalCostPerCoin[coinName] -= costOfSoldCoins;
+
+			Console.WriteLine($"Sold {quantityToSell} of {coinName} at {price} each. New balance: {balance:C}");
+			Console.WriteLine($"Transaction Gain/Loss: {gainOrLoss:C}");
+
+			// Record the transaction in the database with gain or loss
+			RecordTransaction("SELL", coinName, quantityToSell, price, balance, gainOrLoss);
 		}
 		else
 		{
@@ -401,12 +460,12 @@ internal class Program
 		}
 	}
 
-	private static void RecordTransaction(string type, string coinName, decimal quantity, decimal price, decimal balance)
+	private static void RecordTransaction(string type, string coinName, decimal quantity, decimal price, decimal balance, decimal? gainLoss)
 	{
 		using (var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;"))
 		{
 			conn.Open();
-			string insertQuery = "INSERT INTO Transactions (type, name, quantity, price, balance) VALUES (@type, @name, @quantity, @price, @balance);";
+			string insertQuery = "INSERT INTO Transactions (type, name, quantity, price, balance, gain_loss) VALUES (@type, @name, @quantity, @price, @balance, @gainLoss);";
 			using (var cmd = new SQLiteCommand(insertQuery, conn))
 			{
 				cmd.Parameters.AddWithValue("@type", type);
@@ -414,65 +473,124 @@ internal class Program
 				cmd.Parameters.AddWithValue("@quantity", quantity);
 				cmd.Parameters.AddWithValue("@price", price);
 				cmd.Parameters.AddWithValue("@balance", balance);
+				cmd.Parameters.AddWithValue("@gainLoss", gainLoss.HasValue ? (object)gainLoss.Value : DBNull.Value);
 				cmd.ExecuteNonQuery();
 			}
 		}
 	}
 
-
 	private static void ShowBalance(Dictionary<string, decimal> prices)
-    {
-		Console.WriteLine("\n=== Balance and portfolio Report ===");
+	{
+		Console.WriteLine("\n=== Balance and Portfolio Report ===");
 
 		decimal portfolioWorth = 0;
-        decimal totalInvestment = 0;
+		decimal totalInvestment = 0;
 
-        // First, calculate the total portfolio value
-        foreach (var coin in portfolio)
-        {
-            if (coin.Value > 0)
-            {
-                decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
-                decimal value = coin.Value * currentPrice;
-                portfolioWorth += value;
-            }
-        }
+		// Calculate the total portfolio value and total investment
+		foreach (var coin in portfolio)
+		{
+			if (coin.Value > 0)
+			{
+				decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
+				decimal value = coin.Value * currentPrice;
+				portfolioWorth += value;
 
-        if (portfolioWorth == 0)
-        {
-            Console.WriteLine("No holdings in the portfolio.");
-            return;
-        }
+				decimal initialInvestment = initialInvestments.ContainsKey(coin.Key) ? initialInvestments[coin.Key] : 0;
+				totalInvestment += initialInvestment;
+			}
+		}
 
-        Console.WriteLine("Detailed Portfolio Analysis:");
-        foreach (var coin in portfolio)
-        {
-            if (coin.Value > 0)
-            {
-                decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
-                decimal value = coin.Value * currentPrice;
-                decimal initialInvestment = initialInvestments.ContainsKey(coin.Key) ? initialInvestments[coin.Key] : 0;
-                decimal profitOrLoss = value - initialInvestment;
-                totalInvestment += initialInvestment;
+		if (portfolioWorth == 0)
+		{
+			Console.WriteLine("No holdings in the portfolio.");
+		}
+		else
+		{
+			Console.WriteLine("Detailed Portfolio Analysis:");
+			foreach (var coin in portfolio)
+			{
+				if (coin.Value > 0)
+				{
+					decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
+					decimal value = coin.Value * currentPrice;
+					decimal initialInvestment = initialInvestments.ContainsKey(coin.Key) ? initialInvestments[coin.Key] : 0;
+					decimal profitOrLoss = value - initialInvestment;
 
-                decimal percentageOfPortfolio = portfolioWorth > 0 ? (value / portfolioWorth) * 100 : 0;
-                decimal profitOrLossPercentage = initialInvestment > 0 ? (profitOrLoss / initialInvestment) * 100 : 0;
+					decimal percentageOfPortfolio = portfolioWorth > 0 ? (value / portfolioWorth) * 100 : 0;
+					decimal profitOrLossPercentage = initialInvestment > 0 ? (profitOrLoss / initialInvestment) * 100 : 0;
 
-                Console.WriteLine($"{coin.Key}: {coin.Value} units, Current Value: {value:C}, Initial Investment: {initialInvestment:C}, Profit/Loss: {profitOrLoss:C} ({profitOrLossPercentage:N2}%), Percentage of Portfolio: {percentageOfPortfolio:N2}%");
-            }
-        }
+					// Expanded output for each coin
+					Console.WriteLine($"\nCoin: {coin.Key.ToUpper()}");
+					Console.WriteLine($"  Units Held: {coin.Value:N4}");
+					Console.WriteLine($"  Current Price: {currentPrice:C}");
+					Console.WriteLine($"  Current Value: {value:C}");
+					Console.WriteLine($"  Initial Investment: {initialInvestment:C}");
+					Console.WriteLine($"  Profit/Loss: {profitOrLoss:C} ({profitOrLossPercentage:N2}%)");
+					Console.WriteLine($"  Percentage of Portfolio: {percentageOfPortfolio:N2}%");
+				}
+			}
+		}
 
-        decimal totalWorth = balance + portfolioWorth;
-        decimal initialBalance = 10000m; // Starting balance
-        decimal totalProfitOrLoss = totalWorth - initialBalance;
-        decimal percentageChange = initialBalance > 0 ? (totalProfitOrLoss / initialBalance) * 100 : 0;
+		decimal totalWorth = balance + portfolioWorth;
+		decimal initialBalance = 10000m; // Starting balance
+		decimal totalProfitOrLoss = totalWorth - initialBalance;
+		decimal percentageChange = initialBalance > 0 ? (totalProfitOrLoss / initialBalance) * 100 : 0;
 
-        Console.WriteLine($"\nCurrent balance: {balance:C}");
-        Console.WriteLine($"Current portfolio worth: {portfolioWorth:C}");
-        Console.WriteLine($"Total worth: {totalWorth:C}");
-        Console.WriteLine(totalProfitOrLoss >= 0 ? $"Gains: {totalProfitOrLoss:C} ({percentageChange:N2}%)" : $"Losses: {Math.Abs(totalProfitOrLoss):C} ({percentageChange:N2}%)");
+		// Display the total investment across all coins
+		Console.WriteLine($"\nTotal Investment across all coins: {totalInvestment:C}");
+		Console.WriteLine($"Current balance: {balance:C}");
+		Console.WriteLine($"Current portfolio worth: {portfolioWorth:C}");
+		Console.WriteLine($"Total worth: {totalWorth:C}");
+		Console.WriteLine(totalProfitOrLoss >= 0
+			? $"Gains: {totalProfitOrLoss:C} ({percentageChange:N2}%)"
+			: $"Losses: {Math.Abs(totalProfitOrLoss):C} ({percentageChange:N2}%)");
 
-		Console.WriteLine("\n=== End of balance and portfolio Report ===");
+		Console.WriteLine("\n=== End of Balance and Portfolio Report ===");
+	}
+
+	private static void ShowTransactionHistory()
+	{
+		using (var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;"))
+		{
+			conn.Open();
+			string query = @"
+            SELECT name, type, quantity, price, gain_loss, timestamp
+            FROM Transactions
+            ORDER BY name, timestamp;";
+			using (var cmd = new SQLiteCommand(query, conn))
+			{
+				using (var reader = cmd.ExecuteReader())
+				{
+					Console.WriteLine("\n=== Transaction History ===");
+					string currentCoin = null;
+					while (reader.Read())
+					{
+						string name = reader.GetString(0);
+						string type = reader.GetString(1);
+						decimal quantity = reader.GetDecimal(2);
+						decimal price = reader.GetDecimal(3);
+						object gainLossObj = reader.GetValue(4);
+						decimal? gainLoss = gainLossObj != DBNull.Value ? (decimal?)gainLossObj : null;
+						DateTime timestamp = reader.GetDateTime(5);
+
+						if (currentCoin != name)
+						{
+							currentCoin = name;
+							Console.WriteLine($"\nCoin: {currentCoin.ToUpper()}");
+						}
+
+						string transactionInfo = $"  {timestamp} - {type} - Quantity: {quantity:N4}, Price: {price:C}";
+						if (type == "SELL" && gainLoss.HasValue)
+						{
+							string gainLossStr = gainLoss.Value >= 0 ? $"Gain: {gainLoss.Value:C}" : $"Loss: {-gainLoss.Value:C}";
+							transactionInfo += $", {gainLossStr}";
+						}
+						Console.WriteLine(transactionInfo);
+					}
+					Console.WriteLine("\n=== End of Transaction History ===");
+				}
+			}
+		}
 	}
 
 	private static void AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds)
