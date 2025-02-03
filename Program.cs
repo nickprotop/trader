@@ -10,7 +10,7 @@ using System.Text.Json;
 internal class Program
 {
     private static readonly HttpClient client = new HttpClient();
-    private const string API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,cardano&vs_currencies=eur";
+    private const string API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,cardano&vs_currencies=usd";
     private static readonly string dbPath = "crypto_prices.db";
 
     private static readonly bool isConsoleAvailable = IsConsoleAvailable();
@@ -286,7 +286,7 @@ internal class Program
             foreach (var coin in data ?? new Dictionary<string, Dictionary<string, decimal>>())
             {
                 string name = coin.Key;
-                decimal price = coin.Value["eur"];
+                decimal price = coin.Value["usd"];
                 prices[name] = price;
 
                 if (!priceHistory.ContainsKey(name))
