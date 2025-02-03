@@ -6,6 +6,7 @@ using System.Data.SQLite;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Spectre.Console;
 
 namespace Trader
 {
@@ -41,8 +42,7 @@ namespace Trader
 		{
 			bool clearPreviousTransactions = args.Contains("-c");
 
-			Console.WriteLine("=== Welcome to the Crypto Trading Bot ===");
-
+			AnsiConsole.MarkupLine("[bold yellow]=== Welcome to the Crypto Trading Bot ===[/]");
 			// Do not load previous transactions
 			InitializeDatabase(true);
 
@@ -89,19 +89,13 @@ namespace Trader
 
 						if (key.Key == ConsoleKey.Q)
 						{
-							Console.WriteLine("Exiting the program...");
+							AnsiConsole.MarkupLine("[bold red]Exiting the program...[/]");
 							break;
 						}
 
 						if (key.Key == ConsoleKey.P)
 						{
 							PrintProgramParameters();
-							PrintMenu();
-						}
-
-						if (key.Key == ConsoleKey.A)
-						{
-							AnalyzeIndicators(prices, Parameters.CustomPeriods, analysisWindowSeconds, true);
 							PrintMenu();
 						}
 					}
@@ -117,14 +111,14 @@ namespace Trader
 					{
 						prices = await GetCryptoPrices();
 						StoreIndicatorsInDatabase(prices);
-						AnalyzeIndicators(prices, Parameters.CustomPeriods, analysisWindowSeconds, false);
+						AnalyzeIndicators(prices, Parameters.CustomPeriods, analysisWindowSeconds);
 						ShowBalance(prices, false);
 
 						PrintMenu();
 
 						// Update the next iteration time
 						nextIterationTime = DateTime.UtcNow.AddSeconds(Parameters.CustomIntervalSeconds);
-						Console.WriteLine($"\n=== Next update in {Parameters.CustomIntervalSeconds} seconds... ===");
+						AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update in {Parameters.CustomIntervalSeconds} seconds... ===[/]");
 					}
 					else
 					{
@@ -135,7 +129,7 @@ namespace Trader
 			}
 			catch (Exception ex)
 			{
-				Console.WriteLine($"Error: {ex.Message}");
+				AnsiConsole.MarkupLine($"[bold red]Error: {ex.Message}[/]");
 			}
 		}
 
@@ -154,29 +148,28 @@ namespace Trader
 
 		private static void PrintMenu()
 		{
-			Console.WriteLine("\n=== Menu ===");
-			Console.WriteLine("Press 'C' to clear the database and start over.");
-			Console.WriteLine("Press 'T' to view transaction history.");
-			Console.WriteLine("Press 'B' to view verbose balance and portfolio.");
-			Console.WriteLine("Press 'S' to show database statistics.");
-			Console.WriteLine("Press 'P' to show program parameters.");
-			Console.WriteLine("Press 'A' to show verbose analysis");
-			Console.WriteLine("Press 'Q' to quit the program.");
-			Console.WriteLine("============");
+			AnsiConsole.MarkupLine("\n[bold yellow]=== Menu ===[/]");
+			AnsiConsole.MarkupLine("Press [bold green]'C'[/] to clear the database and start over.");
+			AnsiConsole.MarkupLine("Press [bold green]'T'[/] to view transaction history.");
+			AnsiConsole.MarkupLine("Press [bold green]'B'[/] to view verbose balance and portfolio.");
+			AnsiConsole.MarkupLine("Press [bold green]'S'[/] to show database statistics.");
+			AnsiConsole.MarkupLine("Press [bold green]'P'[/] to show program parameters.");
+			AnsiConsole.MarkupLine("Press [bold green]'Q'[/] to quit the program.");
+			AnsiConsole.MarkupLine("[bold yellow]============[/]");
 		}
 
 		private static void PrintProgramParameters()
 		{
-			Console.WriteLine("\n=== Program Parameters ===");
-			Console.WriteLine($"API URL: {Parameters.API_URL}");
-			Console.WriteLine($"Database Path: {Parameters.dbPath}");
-			Console.WriteLine($"Custom Interval Seconds: {Parameters.CustomIntervalSeconds}");
-			Console.WriteLine($"Custom Periods: {Parameters.CustomPeriods}");
-			Console.WriteLine($"Stop-Loss Threshold: {Parameters.stopLossThreshold:P}");
-			Console.WriteLine($"Profit-Taking Threshold: {Parameters.profitTakingThreshold:P}");
-			Console.WriteLine($"Starting Balance: {RuntimeContext.balance:C}");
-			Console.WriteLine($"Max Investment Per Coin: {Parameters.maxInvestmentPerCoin:C}");
-			Console.WriteLine("==========================");
+			AnsiConsole.MarkupLine("\n[bold yellow]=== Program Parameters ===[/]");
+			AnsiConsole.MarkupLine($"API URL: [bold cyan]{Parameters.API_URL}[/]");
+			AnsiConsole.MarkupLine($"Database Path: [bold cyan]{Parameters.dbPath}[/]");
+			AnsiConsole.MarkupLine($"Custom Interval Seconds: [bold cyan]{Parameters.CustomIntervalSeconds}[/]");
+			AnsiConsole.MarkupLine($"Custom Periods: [bold cyan]{Parameters.CustomPeriods}[/]");
+			AnsiConsole.MarkupLine($"Stop-Loss Threshold: [bold cyan]{Parameters.stopLossThreshold:P}[/]");
+			AnsiConsole.MarkupLine($"Profit-Taking Threshold: [bold cyan]{Parameters.profitTakingThreshold:P}[/]");
+			AnsiConsole.MarkupLine($"Starting Balance: [bold cyan]{RuntimeContext.balance:C}[/]");
+			AnsiConsole.MarkupLine($"Max Investment Per Coin: [bold cyan]{Parameters.maxInvestmentPerCoin:C}[/]");
+			AnsiConsole.MarkupLine("[bold yellow]==========================[/]");
 		}
 
 		private static void ResetDatabase()
@@ -194,7 +187,7 @@ namespace Trader
 			RuntimeContext.totalQuantityPerCoin.Clear();
 			RuntimeContext.totalCostPerCoin.Clear();
 
-			Console.WriteLine("Database has been reset. Starting over...");
+			AnsiConsole.MarkupLine("[bold red]Database has been reset. Starting over...[/]");
 		}
 
 		private static void ShowDatabaseStats()
@@ -210,7 +203,7 @@ namespace Trader
 				{
 					using (var reader = cmd.ExecuteReader())
 					{
-						Console.WriteLine("\n=== Database Statistics ===");
+						AnsiConsole.MarkupLine("\n[bold yellow]=== Database Statistics ===[/]");
 						while (reader.Read())
 						{
 							string name = reader.GetString(0);
@@ -226,7 +219,7 @@ namespace Trader
 							Console.WriteLine($"  Avg Price: ${avgPrice:N2}");
 							Console.WriteLine($"  InMemory PriceHistory: {RuntimeContext.priceHistory[name]?.Count}");
 						}
-						Console.WriteLine("\n=== End of Statistics ===");
+						AnsiConsole.MarkupLine("\n[bold yellow]=== End of Statistics ===[/]");
 					}
 				}
 			}
@@ -384,7 +377,7 @@ namespace Trader
 		{
 			try
 			{
-				Console.WriteLine("\n=== Fetching cryptocurrency prices... ===");
+				Console.WriteLine("\n[bold yellow]=== Fetching cryptocurrency prices... ===[/]");
 
 				var response = await client.GetStringAsync(Parameters.API_URL);
 				var data = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, decimal>>>(response);
@@ -460,7 +453,7 @@ namespace Trader
 
 		private static void ShowBalance(Dictionary<string, decimal> prices, bool verbose = true)
 		{
-			Console.WriteLine("\n=== Balance and Portfolio Report ===");
+			AnsiConsole.MarkupLine("\n[bold yellow]=== Balance and Portfolio Report ===[/]");
 
 			decimal portfolioWorth = 0;
 			decimal totalInvestment = 0;
@@ -481,13 +474,13 @@ namespace Trader
 
 			if (portfolioWorth == 0)
 			{
-				Console.WriteLine("No holdings in the portfolio.");
+				AnsiConsole.MarkupLine("[bold red]No holdings in the portfolio.[/]");
 			}
 			else
 			{
 				if (verbose)
 				{
-					Console.WriteLine("Detailed Portfolio Analysis:");
+					AnsiConsole.MarkupLine("[bold yellow]Detailed Portfolio Analysis:[/]");
 					foreach (var coin in RuntimeContext.portfolio)
 					{
 						if (coin.Value > 0)
@@ -501,13 +494,13 @@ namespace Trader
 							decimal profitOrLossPercentage = initialInvestment > 0 ? (profitOrLoss / initialInvestment) * 100 : 0;
 
 							// Expanded output for each coin
-							Console.WriteLine($"\nCoin: {coin.Key.ToUpper()}");
-							Console.WriteLine($"  Units Held: {coin.Value:N4}");
-							Console.WriteLine($"  Current Price: {currentPrice:C}");
-							Console.WriteLine($"  Current Value: {value:C}");
-							Console.WriteLine($"  Initial Investment: {initialInvestment:C}");
-							Console.WriteLine($"  Profit/Loss: {profitOrLoss:C} ({profitOrLossPercentage:N2}%)");
-							Console.WriteLine($"  Percentage of Portfolio: {percentageOfPortfolio:N2}%");
+							AnsiConsole.MarkupLine($"\n[bold cyan]Coin: {coin.Key.ToUpper()}[/]");
+							AnsiConsole.MarkupLine($"  Units Held: [bold green]{coin.Value:N4}[/]");
+							AnsiConsole.MarkupLine($"  Current Price: [bold green]{currentPrice:C}[/]");
+							AnsiConsole.MarkupLine($"  Current Value: [bold green]{value:C}[/]");
+							AnsiConsole.MarkupLine($"  Initial Investment: [bold green]{initialInvestment:C}[/]");
+							AnsiConsole.MarkupLine($"  Profit/Loss: [bold green]{profitOrLoss:C} ({profitOrLossPercentage:N2}%)[/]");
+							AnsiConsole.MarkupLine($"  Percentage of Portfolio: [bold green]{percentageOfPortfolio:N2}%[/]");
 						}
 					}
 				}
@@ -519,15 +512,15 @@ namespace Trader
 			decimal percentageChange = initialBalance > 0 ? (totalProfitOrLoss / initialBalance) * 100 : 0;
 
 			// Display the total investment across all coins
-			Console.WriteLine($"\nTotal Investment across all coins: {totalInvestment:C}");
-			Console.WriteLine($"Current balance: {RuntimeContext.balance:C}");
-			Console.WriteLine($"Current portfolio worth: {portfolioWorth:C}");
-			Console.WriteLine($"Total worth: {totalWorth:C}");
-			Console.WriteLine(totalProfitOrLoss >= 0
-				? $"Gains: {totalProfitOrLoss:C} ({percentageChange:N2}%)"
-				: $"Losses: {Math.Abs(totalProfitOrLoss):C} ({percentageChange:N2}%)");
+			AnsiConsole.MarkupLine($"\n[bold yellow]Total Investment across all coins: {totalInvestment:C}[/]");
+			AnsiConsole.MarkupLine($"Current balance: [bold green]{RuntimeContext.balance:C}[/]");
+			AnsiConsole.MarkupLine($"Current portfolio worth: [bold green]{portfolioWorth:C}[/]");
+			AnsiConsole.MarkupLine($"Total worth: [bold green]{totalWorth:C}[/]");
+			AnsiConsole.MarkupLine(totalProfitOrLoss >= 0
+				? $"[bold green]Gains: {totalProfitOrLoss:C} ({percentageChange:N2}%)[/]"
+				: $"[bold red]Losses: {Math.Abs(totalProfitOrLoss):C} ({percentageChange:N2}%)[/]");
 
-			Console.WriteLine("\n=== End of Balance and Portfolio Report ===");
+			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Balance and Portfolio Report ===[/]");
 		}
 
 		private static void ShowTransactionHistory()
@@ -543,7 +536,7 @@ namespace Trader
 				{
 					using (var reader = cmd.ExecuteReader())
 					{
-						Console.WriteLine("\n=== Transaction History ===");
+						AnsiConsole.MarkupLine("\n[bold yellow]=== Transaction History ===[/]");
 						string currentCoin = null;
 						while (reader.Read())
 						{
@@ -558,7 +551,7 @@ namespace Trader
 							if (currentCoin != name)
 							{
 								currentCoin = name;
-								Console.WriteLine($"\nCoin: {currentCoin.ToUpper()}");
+								AnsiConsole.MarkupLine($"\n[bold cyan]Coin: {currentCoin.ToUpper()}[/]");
 							}
 
 							string transactionInfo = $"  {timestamp} - {type} - Quantity: {quantity:N4}, Price: {price:C}";
@@ -567,18 +560,18 @@ namespace Trader
 								string gainLossStr = gainLoss.Value >= 0 ? $"Gain: {gainLoss.Value:C}" : $"Loss: {-gainLoss.Value:C}";
 								transactionInfo += $", {gainLossStr}";
 							}
-							Console.WriteLine(transactionInfo);
+							AnsiConsole.MarkupLine(transactionInfo);
 						}
-						Console.WriteLine("\n=== End of Transaction History ===");
+						AnsiConsole.MarkupLine("\n[bold yellow]=== End of Transaction History ===[/]");
 					}
 				}
 			}
 		}
 
-		private static void AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds, bool verbose = true)
+		private static void AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds)
 		{
-			Console.WriteLine("\n=== Market Analysis Report ===");
-			Console.WriteLine($"Analysis Window: {analysisWindowSeconds} seconds ({customPeriods} periods of {Parameters.CustomIntervalSeconds} seconds each)");
+			AnsiConsole.MarkupLine("\n[bold yellow]=== Market Analysis Report ===[/]");
+			AnsiConsole.MarkupLine($"Analysis Window: [bold cyan]{analysisWindowSeconds} seconds ({customPeriods} periods of {Parameters.CustomIntervalSeconds} seconds each)[/]");
 
 			foreach (var coin in prices)
 			{
@@ -600,22 +593,22 @@ namespace Trader
 				DateTime firstTimestamp = GetFirstTimestampSeconds(coin.Key, analysisWindowSeconds);
 				TimeSpan timeDifference = DateTime.UtcNow - firstTimestamp;
 
-				Console.WriteLine($"\n{coin.Key.ToUpper()}:");
-				if (verbose) Console.WriteLine($"  Current Price: ${coin.Value:N2}");
-				if (verbose) Console.WriteLine($"  {timeDifference.TotalMinutes:N2}m Change: {priceChangeWindow:N2}%");
-				if (verbose) Console.WriteLine($"  RSI ({recentHistory.Count}): {rsi:N2}");
-				if (verbose) Console.WriteLine($"  SMA ({recentHistory.Count}): ${sma:N2}");
-				if (verbose) Console.WriteLine($"  EMA ({recentHistory.Count}): ${ema:N2}");
-				if (verbose) Console.WriteLine($"  MACD: ${macd:N2}");
-				if (verbose) Console.WriteLine($"  Data Points Included in Analysis: {recentHistory.Count}");
-				if (verbose) Console.WriteLine($"  First Data Timestamp: {firstTimestamp} (UTC)");
+				AnsiConsole.MarkupLine($"\n[bold cyan]{coin.Key.ToUpper()}[/]:");
+				AnsiConsole.MarkupLine($"  Current Price: [bold green]${coin.Value:N2}[/]");
+				AnsiConsole.MarkupLine($"  {timeDifference.TotalMinutes:N2}m Change: [bold green]{priceChangeWindow:N2}%[/]");
+				AnsiConsole.MarkupLine($"  RSI ({recentHistory.Count}): [bold green]{rsi:N2}[/]");
+				AnsiConsole.MarkupLine($"  SMA ({recentHistory.Count}): [bold green]${sma:N2}[/]");
+				AnsiConsole.MarkupLine($"  EMA ({recentHistory.Count}): [bold green]${ema:N2}[/]");
+				AnsiConsole.MarkupLine($"  MACD: [bold green]${macd:N2}[/]");
+				AnsiConsole.MarkupLine($"  Data Points Included in Analysis: [bold green]{recentHistory.Count}[/]");
+				AnsiConsole.MarkupLine($"  First Data Timestamp: [bold green]{firstTimestamp} (UTC)[/]");
 
 				// Market sentiment analysis
 				string sentiment = "NEUTRAL";
 				if (rsi < 30) sentiment = "OVERSOLD";
 				else if (rsi > 70) sentiment = "OVERBOUGHT";
 
-				Console.WriteLine($"  Market Sentiment: {sentiment}");
+				AnsiConsole.MarkupLine($"  Market Sentiment: [bold green]{sentiment}[/]");
 
 				// Stop-loss and profit-taking strategy
 				if (RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0)
@@ -626,12 +619,12 @@ namespace Trader
 
 					if (profitOrLoss <= Parameters.stopLossThreshold)
 					{
-						Console.WriteLine($"  STOP-LOSS Triggered: Selling {coin.Key} to prevent further loss.");
+						AnsiConsole.MarkupLine($"  [bold red]STOP-LOSS Triggered: Selling {coin.Key} to prevent further loss.[/]");
 						tradeOperations.Sell(coin.Key, coin.Value);
 					}
 					else if (profitOrLoss >= Parameters.profitTakingThreshold)
 					{
-						Console.WriteLine($"  PROFIT-TAKING Triggered: Selling {coin.Key} to secure profit.");
+						AnsiConsole.MarkupLine($"  [bold green]PROFIT-TAKING Triggered: Selling {coin.Key} to secure profit.[/]");
 						tradeOperations.Sell(coin.Key, coin.Value);
 					}
 				}
@@ -640,7 +633,7 @@ namespace Trader
 				if (rsi < 30 && coin.Value < sma && coin.Value < ema && macd < 0)
 				{
 					decimal confidence = (30 - rsi) / 30 * 100;
-					Console.WriteLine($"  BUY Signal (Confidence: {confidence:N2}%)");
+					AnsiConsole.MarkupLine($"  [bold green]BUY Signal (Confidence: {confidence:N2}%)[/]");
 
 					if (RuntimeContext.balance > 0)
 					{
@@ -650,15 +643,14 @@ namespace Trader
 				else if (rsi > 70 && RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0 && coin.Value > sma && coin.Value > ema && macd > 0)
 				{
 					decimal confidence = (rsi - 70) / 30 * 100;
-					Console.WriteLine($"  SELL Signal (Confidence: {confidence:N2}%)");
+					AnsiConsole.MarkupLine($"  [bold red]SELL Signal (Confidence: {confidence:N2}%)[/]");
 
 					tradeOperations.Sell(coin.Key, coin.Value);
 				}
 			}
 
-			Console.WriteLine("\n=== End of Analysis ===");
+			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Analysis ===[/]");
 		}
-
 
 		private static decimal CalculateEMA(List<decimal> prices, int periods)
 		{
