@@ -10,7 +10,7 @@ using System.Text.Json;
 internal class Program
 {
     private static readonly HttpClient client = new HttpClient();
-    private const string API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,cardano&vs_currencies=usd";
+    private const string API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,cardano&vs_currencies=eur";
     private static readonly string dbPath = "crypto_prices.db";
 
     private static readonly bool isConsoleAvailable = IsConsoleAvailable();
@@ -20,6 +20,8 @@ internal class Program
 
 	private const decimal stopLossThreshold = -0.10m; // 10% loss
 	private const decimal profitTakingThreshold = 0.20m; // 20% gain
+
+	private const decimal maxInvestmentPerCoin = 3000m; // Example maximum investment amount per coin
 
 	private static Dictionary<string, List<decimal>> priceHistory = new Dictionary<string, List<decimal>>();
 	private static decimal balance = 10000m; // Starting balance
@@ -43,7 +45,8 @@ internal class Program
 	{
 		bool clearPreviousTransactions = args.Contains("-c");
 
-		InitializeDatabase(clearPreviousTransactions);
+        // Do not load previous transactions
+		InitializeDatabase(true);
 		ShowDatabaseStats();
 
         bool firstRun = true;
@@ -95,6 +98,7 @@ internal class Program
 		Console.WriteLine($"Stop-Loss Threshold: {stopLossThreshold:P}");
 		Console.WriteLine($"Profit-Taking Threshold: {profitTakingThreshold:P}");
 		Console.WriteLine($"Starting Balance: {balance:C}");
+		Console.WriteLine($"Max Investment Per Coin: {maxInvestmentPerCoin:C}");
 		Console.WriteLine("==========================");
 	}
 
@@ -333,6 +337,16 @@ internal class Program
 		decimal amountToBuy = quantity ?? ((balance / 10) / price); // Buy with 10% of the balance
 		decimal cost = amountToBuy * price;
 
+		// Calculate the current investment in the coin
+		decimal currentInvestment = initialInvestments.ContainsKey(coinName) ? initialInvestments[coinName] : 0;
+
+		// Check if the new investment exceeds the maximum limit
+		if (currentInvestment + cost > maxInvestmentPerCoin)
+		{
+			Console.WriteLine($"Cannot buy {amountToBuy} of {coinName} at {price} each. Maximum investment limit of {maxInvestmentPerCoin:C} exceeded.");
+			return;
+		}
+
 		if (balance >= cost)
 		{
 			balance -= cost;
@@ -365,6 +379,7 @@ internal class Program
 			Console.WriteLine($"Insufficient balance to buy {amountToBuy} of {coinName} at {price} each.");
 		}
 	}
+
 
 	private static void SimulateSell(string coinName, decimal price)
 	{
