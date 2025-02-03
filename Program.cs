@@ -286,7 +286,7 @@ internal class Program
             foreach (var coin in data ?? new Dictionary<string, Dictionary<string, decimal>>())
             {
                 string name = coin.Key;
-                decimal price = coin.Value["usd"];
+                decimal price = coin.Value["eur"];
                 prices[name] = price;
 
                 if (!priceHistory.ContainsKey(name))
