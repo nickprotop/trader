@@ -7,7 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 
-class Program
+internal class Program
 {
     private static readonly HttpClient client = new HttpClient();
     private const string API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,cardano&vs_currencies=usd";
@@ -30,15 +30,15 @@ class Program
         }
     }
 
-    const int customIntervalSeconds = 30; // Example interval time in seconds
-    const int customPeriods = 60; // Example number of periods
+    private const int customIntervalSeconds = 30; // Example interval time in seconds
+    private const int customPeriods = 60; // Example number of periods
 
     private static Dictionary<string, List<decimal>> priceHistory = new Dictionary<string, List<decimal>>();
     private static decimal balance = 10000m; // Starting balance
     private static Dictionary<string, decimal> portfolio = new Dictionary<string, decimal>();
     private static Dictionary<string, decimal> initialInvestments = new Dictionary<string, decimal>();
 
-    static async Task Main()
+    private static async Task Main()
     {
         InitializeDatabase();
         ShowDatabaseStats();
@@ -64,7 +64,7 @@ class Program
         }
     }
 
-        private static void ShowDatabaseStats()
+    private static void ShowDatabaseStats()
     {
         using (var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;"))
         {
@@ -132,7 +132,7 @@ class Program
             }
 
             // Load historical prices into priceHistory
-            string selectQuery = "SELECT name, price FROM Prices ORDER BY timestamp DESC LIMIT 50;";
+            string selectQuery = $"SELECT name, price FROM Prices ORDER BY timestamp DESC LIMIT {customPeriods};";
             using (var selectCmd = new SQLiteCommand(selectQuery, conn))
             {
                 using (var reader = selectCmd.ExecuteReader())
@@ -170,11 +170,12 @@ class Program
                     priceHistory[name] = new List<decimal>();
 
                 priceHistory[name].Add(price);
-                if (priceHistory[name].Count > 50)
+                if (priceHistory[name].Count > customPeriods)
                     priceHistory[name].RemoveAt(0);
             }
             return prices;
-        } catch (Exception ex)
+        }
+        catch (Exception ex)
         {
             Console.WriteLine($"Error: {ex.Message}");
             return new Dictionary<string, decimal>();
@@ -374,7 +375,7 @@ class Program
             {
                 decimal confidence = (30 - rsi) / 30 * 100;
                 Console.WriteLine($"  BUY Signal (Confidence: {confidence:N2}%)");
-                
+
                 if (balance > 0)
                 {
                     SimulateBuy(coin.Key, null, coin.Value);
@@ -384,11 +385,11 @@ class Program
             {
                 decimal confidence = (rsi - 70) / 30 * 100;
                 Console.WriteLine($"  SELL Signal (Confidence: {confidence:N2}%)");
-                
+
                 SimulateSell(coin.Key, coin.Value);
             }
         }
-        
+
         Console.WriteLine("\n=== End of Analysis ===");
     }
 
@@ -442,7 +443,7 @@ class Program
         {
             conn.Open();
             string query = @"
-                SELECT price FROM Prices 
+                SELECT price FROM Prices
                 WHERE name = @name AND timestamp >= datetime('now', @seconds || ' seconds')
                 ORDER BY timestamp DESC;";
             using (var cmd = new SQLiteCommand(query, conn))
@@ -467,7 +468,7 @@ class Program
         {
             conn.Open();
             string query = @"
-                SELECT timestamp FROM Prices 
+                SELECT timestamp FROM Prices
                 WHERE name = @name AND timestamp >= datetime('now', @seconds || ' seconds')
                 ORDER BY timestamp ASC LIMIT 1;";
             using (var cmd = new SQLiteCommand(query, conn))
