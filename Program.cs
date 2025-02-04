@@ -525,92 +525,103 @@ namespace Trader
             }
         }
 
-        private static void ShowBalance(Dictionary<string, decimal> prices, bool verbose = true)
-        {
-            AnsiConsole.MarkupLine($"\n[bold yellow]=== Balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]");
+		private static void ShowBalance(Dictionary<string, decimal> prices, bool verbose = true)
+		{
+			AnsiConsole.MarkupLine($"\n[bold yellow]=== Balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]\n");
 
-            decimal portfolioWorth = 0;
-            decimal totalInvestment = 0;
+			decimal portfolioWorth = 0;
+			decimal totalInvestment = 0;
 
-            // Calculate the total portfolio value and total investment
-            foreach (var coin in RuntimeContext.portfolio)
-            {
-                if (coin.Value > 0)
-                {
-                    decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
-                    decimal value = coin.Value * currentPrice;
-                    portfolioWorth += value;
+			// Calculate the total portfolio value and total investment
+			foreach (var coin in RuntimeContext.portfolio)
+			{
+				if (coin.Value > 0)
+				{
+					decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
+					decimal value = coin.Value * currentPrice;
+					portfolioWorth += value;
 
-                    decimal initialInvestment = RuntimeContext.initialInvestments.ContainsKey(coin.Key) ? RuntimeContext.initialInvestments[coin.Key] : 0;
-                    totalInvestment += initialInvestment;
-                }
-            }
+					decimal initialInvestment = RuntimeContext.initialInvestments.ContainsKey(coin.Key) ? RuntimeContext.initialInvestments[coin.Key] : 0;
+					totalInvestment += initialInvestment;
+				}
+			}
 
-            if (verbose)
-            {
-                if (portfolioWorth == 0)
-                {
-                    AnsiConsole.MarkupLine("[bold red]\nNo holdings in the portfolio.[/]");
-                }
-                else
-                {
-                    var table = new Table();
-                    table.AddColumn("Coin");
-                    table.AddColumn("Units Held");
-                    table.AddColumn("Current Price");
-                    table.AddColumn("Current Value");
-                    table.AddColumn("Initial Investment");
-                    table.AddColumn("Profit/Loss");
-                    table.AddColumn("Percentage of Portfolio");
+			decimal totalWorth = RuntimeContext.balance + portfolioWorth;
+			decimal initialBalance = Parameters.startingBalance; // Starting balance
+			decimal totalProfitOrLoss = totalWorth - initialBalance;
+			decimal percentageChange = initialBalance > 0 ? (totalProfitOrLoss / initialBalance) * 100 : 0;
 
-                    foreach (var coin in RuntimeContext.portfolio)
-                    {
-                        if (coin.Value > 0)
-                        {
-                            decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
-                            decimal value = coin.Value * currentPrice;
-                            decimal initialInvestment = RuntimeContext.initialInvestments.ContainsKey(coin.Key) ? RuntimeContext.initialInvestments[coin.Key] : 0;
-                            decimal profitOrLoss = value - initialInvestment;
+			// Create a table for balance information
+			var balanceTable = new Table();
+			balanceTable.AddColumn("Description");
+			balanceTable.AddColumn("Value");
 
-                            decimal percentageOfPortfolio = portfolioWorth > 0 ? (value / portfolioWorth) * 100 : 0;
-                            decimal profitOrLossPercentage = initialInvestment > 0 ? (profitOrLoss / initialInvestment) * 100 : 0;
+			balanceTable.AddRow("Total Investment across all coins", $"[bold cyan]{totalInvestment:C}[/]");
+			balanceTable.AddRow("Current balance", $"[bold green]{RuntimeContext.balance:C}[/]");
+			balanceTable.AddRow("Current portfolio worth", $"[bold green]{portfolioWorth:C}[/]");
+			balanceTable.AddRow("Total worth", $"[bold green]{totalWorth:C}[/]");
+			balanceTable.AddRow(totalProfitOrLoss >= 0
+				? "Gains"
+				: "Losses", totalProfitOrLoss >= 0
+				? $"[bold green]{totalProfitOrLoss:C} ({percentageChange:N2}%)[/]"
+				: $"[bold red]{Math.Abs(totalProfitOrLoss):C} ({percentageChange:N2}%)[/]");
 
-                            string profitOrLossStr = profitOrLoss >= 0 ? $"[green]{profitOrLoss:C} ({profitOrLossPercentage:N2}%)[/]" : $"[red]{profitOrLoss:C} ({profitOrLossPercentage:N2}%)[/]";
+			AnsiConsole.Write(balanceTable);
 
-                            table.AddRow(
-                                coin.Key.ToUpper(),
-                                coin.Value.ToString("N4"),
-                                currentPrice.ToString("C"),
-                                value.ToString("C"),
-                                initialInvestment.ToString("C"),
-                                profitOrLossStr,
-                                $"{percentageOfPortfolio:N2}%"
-                            );
-                        }
-                    }
+			if (verbose)
+			{
+				var portfolioTable = new Table();
 
-                    AnsiConsole.Write(table);
-                }
-            }
+				if (portfolioWorth == 0)
+				{
+					portfolioTable.AddColumn("Portfolio");
+					portfolioTable.AddRow("[bold red]No holdings in the portfolio.[/]");
+				}
+				else
+				{
+					portfolioTable.AddColumn("Coin");
+					portfolioTable.AddColumn("Units Held");
+					portfolioTable.AddColumn("Current Price");
+					portfolioTable.AddColumn("Current Value");
+					portfolioTable.AddColumn("Initial Investment");
+					portfolioTable.AddColumn("Profit/Loss");
+					portfolioTable.AddColumn("Percentage of Portfolio");
 
-            decimal totalWorth = RuntimeContext.balance + portfolioWorth;
-            decimal initialBalance = 10000m; // Starting balance
-            decimal totalProfitOrLoss = totalWorth - initialBalance;
-            decimal percentageChange = initialBalance > 0 ? (totalProfitOrLoss / initialBalance) * 100 : 0;
+					foreach (var coin in RuntimeContext.portfolio)
+					{
+						if (coin.Value > 0)
+						{
+							decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
+							decimal value = coin.Value * currentPrice;
+							decimal initialInvestment = RuntimeContext.initialInvestments.ContainsKey(coin.Key) ? RuntimeContext.initialInvestments[coin.Key] : 0;
+							decimal profitOrLoss = value - initialInvestment;
 
-            // Display the total investment across all coins
-            AnsiConsole.MarkupLine($"\n[bold yellow]Total Investment across all coins: {totalInvestment:C}[/]");
-            AnsiConsole.MarkupLine($"Current balance: [bold green]{RuntimeContext.balance:C}[/]");
-            AnsiConsole.MarkupLine($"Current portfolio worth: [bold green]{portfolioWorth:C}[/]");
-            AnsiConsole.MarkupLine($"Total worth: [bold green]{totalWorth:C}[/]");
-            AnsiConsole.MarkupLine(totalProfitOrLoss >= 0
-                ? $"[bold green]Gains: {totalProfitOrLoss:C} ({percentageChange:N2}%)[/]"
-                : $"[bold red]Losses: {Math.Abs(totalProfitOrLoss):C} ({percentageChange:N2}%)[/]");
+							decimal percentageOfPortfolio = portfolioWorth > 0 ? (value / portfolioWorth) * 100 : 0;
+							decimal profitOrLossPercentage = initialInvestment > 0 ? (profitOrLoss / initialInvestment) * 100 : 0;
 
-            AnsiConsole.MarkupLine($"\n[bold yellow]=== End of balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]");
-        }
+							string profitOrLossStr = profitOrLoss >= 0 ? $"[green]{profitOrLoss:C} ({profitOrLossPercentage:N2}%)[/]" : $"[red]{profitOrLoss:C} ({profitOrLossPercentage:N2}%)[/]";
 
-        private static void ShowTransactionHistory()
+							portfolioTable.AddRow(
+								coin.Key.ToUpper(),
+								coin.Value.ToString("N4"),
+								currentPrice.ToString("C"),
+								value.ToString("C"),
+								initialInvestment.ToString("C"),
+								profitOrLossStr,
+								$"{percentageOfPortfolio:N2}%"
+							);
+						}
+					}
+				}
+
+				AnsiConsole.Write(portfolioTable);
+			}
+
+			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]");
+		}
+
+
+		private static void ShowTransactionHistory()
         {
             AnsiConsole.MarkupLine("\n[bold yellow]=== Transactions History ===[/]\n");
 
@@ -844,35 +855,6 @@ namespace Trader
             return macdHistogram;
         }
 
-        private static List<(decimal Price, DateTime Timestamp)> GetRecentHistorySeconds(string coin, int seconds)
-        {
-            var recentHistory = new List<(decimal Price, DateTime Timestamp)>();
-            using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
-            {
-                conn.Open();
-                string query = @"
-            SELECT price, timestamp FROM Prices
-            WHERE name = @name AND timestamp >= datetime('now', @seconds || ' seconds')
-            ORDER BY timestamp DESC;"; // Order by timestamp in descending order to get the latest rows
-                using (var cmd = new SQLiteCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@name", coin);
-                    cmd.Parameters.AddWithValue("@seconds", -seconds);
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            decimal price = reader.GetDecimal(0);
-                            DateTime timestamp = reader.GetDateTime(1);
-                            recentHistory.Add((price, timestamp));
-                        }
-                    }
-                }
-            }
-            recentHistory.Reverse(); // Reverse the list to get chronological order
-            return recentHistory;
-        }
-
         private static List<(decimal Price, DateTime Timestamp)> GetRecentHistoryRows(string coin, int rowCount)
         {
             var recentHistory = new List<(decimal Price, DateTime Timestamp)>();
@@ -901,31 +883,6 @@ namespace Trader
             }
             recentHistory.Reverse(); // Reverse the list to get chronological order
             return recentHistory;
-        }
-
-        private static DateTime GetFirstTimestampSeconds(string coin, int seconds)
-        {
-            using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
-            {
-                conn.Open();
-                string query = @"
-                SELECT timestamp FROM Prices
-                WHERE name = @name AND timestamp >= datetime('now', @seconds || ' seconds')
-                ORDER BY timestamp ASC LIMIT 1;";
-                using (var cmd = new SQLiteCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@name", coin);
-                    cmd.Parameters.AddWithValue("@seconds", -seconds);
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            return reader.GetDateTime(0);
-                        }
-                    }
-                }
-            }
-            return DateTime.MinValue; // Return a default value if no timestamp is found
         }
 
         private static decimal CalculateSMA(List<decimal> prices, int periods)
