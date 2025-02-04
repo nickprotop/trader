@@ -668,22 +668,34 @@ namespace Trader
 
             foreach (var coin in prices)
             {
+                bool operationsAllowed = true;
+
+                AnsiConsole.MarkupLine($"\n[bold cyan]{coin.Key.ToUpper()}[/]:");
+
                 if (!RuntimeContext.priceHistory.ContainsKey(coin.Key))
                     continue;
 
-                var recentHistory = GetRecentHistorySeconds(coin.Key, analysisWindowSeconds);
+                var recentHistoryData = GetRecentHistoryRows(coin.Key, Parameters.CustomPeriods); //GetRecentHistorySeconds(coin.Key, analysisWindowSeconds);
 
-                if (recentHistory.Count < 2) // Need at least 2 data points to calculate change
+                if (recentHistoryData.Count < 2) // Need at least 2 data points to calculate change
                     continue;
 
-                decimal rsi = CalculateRSI(recentHistory);
+                var recentHistory = recentHistoryData.Select(x => x.Price).ToList();
+
+                if (recentHistory.Count < customPeriods)
+                {
+                    AnsiConsole.MarkupLine($"\n[bold red]Insufficient data points for {coin.Key} analysis.[/]");
+                    operationsAllowed = false;
+                }
+
+                decimal rsi = CalculateRSI(recentHistory, recentHistory.Count);
                 decimal sma = CalculateSMA(recentHistory, recentHistory.Count);
                 decimal ema = CalculateEMA(recentHistory, recentHistory.Count);
                 decimal macd = CalculateMACD(recentHistory);
                 decimal priceChangeWindow = CalculatePriceChange(recentHistory);
 
                 // Retrieve the first data timestamp and calculate the time difference from now
-                DateTime firstTimestamp = GetFirstTimestampSeconds(coin.Key, analysisWindowSeconds);
+                DateTime firstTimestamp = recentHistoryData.First().Timestamp; // (coin.Key, analysisWindowSeconds);
                 TimeSpan timeDifference = DateTime.UtcNow - firstTimestamp;
 
                 var table = new Table();
@@ -704,7 +716,6 @@ namespace Trader
 
                 table.AddRow("Market Sentiment", $"[bold green]{sentiment}[/]");
 
-                AnsiConsole.MarkupLine($"\n[bold cyan]{coin.Key.ToUpper()}[/]:");
                 AnsiConsole.Write(table);
 
                 // Stop-loss and profit-taking strategy
@@ -734,7 +745,14 @@ namespace Trader
 
                     if (RuntimeContext.balance > 0)
                     {
-                        tradeOperations.Buy(coin.Key, null, coin.Value);
+                        if (operationsAllowed)
+                        {
+                            tradeOperations.Buy(coin.Key, null, coin.Value);
+                        }
+                        else
+                        {
+                            AnsiConsole.MarkupLine($"\n[bold red]Insufficient data points for {coin.Key} analysis. Skipping buy operation.[/]");
+                        }
                     }
                 }
                 else if (rsi > 70 && RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0 && coin.Value > sma && coin.Value > ema && macd > 0)
@@ -742,7 +760,14 @@ namespace Trader
                     decimal confidence = (rsi - 70) / 30 * 100;
                     AnsiConsole.MarkupLine($"\n[bold cyan]SELL Signal (Confidence: {confidence:N2}%)[/]");
 
-                    tradeOperations.Sell(coin.Key, coin.Value);
+                    if (operationsAllowed)
+                    {
+                        tradeOperations.Sell(coin.Key, coin.Value);
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine($"\n[bold red]Insufficient data points for {coin.Key} analysis. Skipping sell operation.[/]");
+                    }
                 }
             }
 
@@ -792,16 +817,16 @@ namespace Trader
             return macdHistogram;
         }
 
-        private static List<decimal> GetRecentHistorySeconds(string coin, int seconds)
+        private static List<(decimal Price, DateTime Timestamp)> GetRecentHistorySeconds(string coin, int seconds)
         {
-            var recentHistory = new List<decimal>();
+            var recentHistory = new List<(decimal Price, DateTime Timestamp)>();
             using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
             {
                 conn.Open();
                 string query = @"
-                SELECT price FROM Prices
-                WHERE name = @name AND timestamp >= datetime('now', @seconds || ' seconds')
-                ORDER BY timestamp DESC;";
+            SELECT price, timestamp FROM Prices
+            WHERE name = @name AND timestamp >= datetime('now', @seconds || ' seconds')
+            ORDER BY timestamp DESC;"; // Order by timestamp in descending order to get the latest rows
                 using (var cmd = new SQLiteCommand(query, conn))
                 {
                     cmd.Parameters.AddWithValue("@name", coin);
@@ -810,11 +835,44 @@ namespace Trader
                     {
                         while (reader.Read())
                         {
-                            recentHistory.Add(reader.GetDecimal(0));
+                            decimal price = reader.GetDecimal(0);
+                            DateTime timestamp = reader.GetDateTime(1);
+                            recentHistory.Add((price, timestamp));
                         }
                     }
                 }
             }
+            recentHistory.Reverse(); // Reverse the list to get chronological order
+            return recentHistory;
+        }
+
+        private static List<(decimal Price, DateTime Timestamp)> GetRecentHistoryRows(string coin, int rowCount)
+        {
+            var recentHistory = new List<(decimal Price, DateTime Timestamp)>();
+            using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+            {
+                conn.Open();
+                string query = @"
+            SELECT price, timestamp FROM Prices
+            WHERE name = @name
+            ORDER BY timestamp DESC
+            LIMIT @rowCount;"; // Limit the number of rows returned
+                using (var cmd = new SQLiteCommand(query, conn))
+                {
+                    cmd.Parameters.AddWithValue("@name", coin);
+                    cmd.Parameters.AddWithValue("@rowCount", rowCount);
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            decimal price = reader.GetDecimal(0);
+                            DateTime timestamp = reader.GetDateTime(1);
+                            recentHistory.Add((price, timestamp));
+                        }
+                    }
+                }
+            }
+            recentHistory.Reverse(); // Reverse the list to get chronological order
             return recentHistory;
         }
 
@@ -861,7 +919,7 @@ namespace Trader
 
         private static decimal CalculateRSI(List<decimal> prices, int periods = 14)
         {
-            if (prices.Count < periods + 1)
+            if (prices.Count < periods)
                 return 50; // Neutral RSI if not enough data
 
             var gains = new List<decimal>();
