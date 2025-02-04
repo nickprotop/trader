@@ -16,10 +16,11 @@ namespace Trader
 		public const int CustomPeriods = 60; // Example number of periods
 		public const string API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,cardano&vs_currencies=usd";
 		public const string dbPath = "crypto_prices.db";
-		public const decimal stopLossThreshold = -0.10m; // 10% loss
-		public const decimal profitTakingThreshold = 0.20m; // 20% gain
+		public const decimal stopLossThreshold = -0.05m; // 5% loss
+		public const decimal profitTakingThreshold = 0.05m; // 5% gain
 		public const decimal maxInvestmentPerCoin = 3000m; // Example maximum investment amount per coin
 		public const decimal startingBalance = 10000m; // Starting balance
+		public const decimal transactionFeeRate = 0.01m; // 1% transaction fee
 	}
 
 	public static class RuntimeContext
@@ -83,13 +84,13 @@ namespace Trader
 							PrintMenu();
 						}
 
-						if (key.Key == ConsoleKey.B)
+						if (key.Key == ConsoleKey.V)
 						{
-							ShowBalance(RuntimeContext.currentPrices, true);
+							ShowBalance(RuntimeContext.currentPrices, true, true);
 							PrintMenu();
 						}
 
-						if (key.Key == ConsoleKey.S)
+						if (key.Key == ConsoleKey.D)
 						{
 							ShowDatabaseStats();
 							PrintMenu();
@@ -111,6 +112,18 @@ namespace Trader
 						if (key.Key == ConsoleKey.A)
 						{
 							BacktestStrategy(LoadHistoricalData());
+							PrintMenu();
+						}
+
+						if (key.Key == ConsoleKey.S)
+						{
+							SellCoinFromPortfolio();
+							PrintMenu();
+						}
+
+						if (key.Key == ConsoleKey.B)
+						{
+							BuyCoin();
 							PrintMenu();
 						}
 					}
@@ -164,7 +177,6 @@ namespace Trader
 							prices = await GetCryptoPrices();
 							StoreIndicatorsInDatabase(prices);
 							AnalyzeIndicators(prices, Parameters.CustomPeriods, analysisWindowSeconds);
-							ShowBalance(prices, false);
 
 							PrintMenu();
 
@@ -190,6 +202,144 @@ namespace Trader
 			}, token);
 		}
 
+		private static void SellCoinFromPortfolio()
+		{
+			if (RuntimeContext.portfolio.Count == 0)
+			{
+				AnsiConsole.MarkupLine("[bold red]No coins in the portfolio to sell.[/]");
+				return;
+			}
+
+			var table = new Table();
+			table.AddColumn("Coin");
+			table.AddColumn("Units Held");
+			table.AddColumn("Current Price");
+			table.AddColumn("Current Value");
+			table.AddColumn("Gain/Loss");
+
+			foreach (var coin in RuntimeContext.portfolio)
+			{
+				if (coin.Value > 0)
+				{
+					decimal currentPrice = RuntimeContext.currentPrices.ContainsKey(coin.Key) ? RuntimeContext.currentPrices[coin.Key] : 0;
+					decimal value = coin.Value * currentPrice;
+
+					// Calculate gain or loss
+					decimal averageCostBasis = RuntimeContext.totalCostPerCoin[coin.Key] / RuntimeContext.totalQuantityPerCoin[coin.Key];
+					decimal costOfHeldCoins = averageCostBasis * coin.Value;
+					decimal gainOrLoss = value - costOfHeldCoins;
+
+					string gainOrLossStr = gainOrLoss >= 0 ? $"[green]{gainOrLoss:C}[/]" : $"[red]{gainOrLoss:C}[/]";
+
+					table.AddRow(
+						coin.Key.ToUpper(),
+						coin.Value.ToString("N4"),
+						currentPrice.ToString("C"),
+						value.ToString("C"),
+						gainOrLossStr
+					);
+				}
+			}
+
+			AnsiConsole.Write(table);
+
+			var coinToSell = AnsiConsole.Prompt(
+				new SelectionPrompt<string>()
+					.Title("Select a coin to sell (or [bold red]Cancel[/]):")
+					.PageSize(10)
+					.AddChoices(RuntimeContext.portfolio.Keys.Where(k => RuntimeContext.portfolio[k] > 0).Append("Cancel").ToArray())
+			);
+
+			if (coinToSell == "Cancel")
+			{
+				AnsiConsole.MarkupLine("[bold yellow]Sell operation canceled.[/]");
+				return;
+			}
+
+			if (RuntimeContext.portfolio.ContainsKey(coinToSell) && RuntimeContext.portfolio[coinToSell] > 0)
+			{
+				decimal currentPrice = RuntimeContext.currentPrices[coinToSell];
+				decimal quantityToSell = RuntimeContext.portfolio[coinToSell];
+				decimal totalValue = quantityToSell * currentPrice;
+
+				// Calculate gain or loss
+				decimal averageCostBasis = RuntimeContext.totalCostPerCoin[coinToSell] / RuntimeContext.totalQuantityPerCoin[coinToSell];
+				decimal costOfSoldCoins = averageCostBasis * quantityToSell;
+				decimal gainOrLoss = totalValue - costOfSoldCoins;
+
+				var sellResult = tradeOperations.Sell(coinToSell, currentPrice);
+				foreach (var result in sellResult)
+				{
+					AnsiConsole.MarkupLine(result);
+				}
+			}
+			else
+			{
+				AnsiConsole.MarkupLine("[bold red]Invalid selection or no units to sell.[/]");
+			}
+		}
+
+		private static void BuyCoin()
+		{
+			var availableCoins = RuntimeContext.currentPrices.Keys.ToList();
+
+			if (availableCoins.Count == 0)
+			{
+				AnsiConsole.MarkupLine("[bold red]No coins available to buy.[/]");
+				return;
+			}
+
+			var table = new Table();
+			table.AddColumn("Coin");
+			table.AddColumn("Current Price");
+
+			foreach (var coin in availableCoins)
+			{
+				decimal currentPrice = RuntimeContext.currentPrices[coin];
+				table.AddRow(coin.ToUpper(), currentPrice.ToString("C"));
+			}
+
+			AnsiConsole.Write(table);
+
+			var coinToBuy = AnsiConsole.Prompt(
+				new SelectionPrompt<string>()
+					.Title("Select a coin to buy (or [bold red]Cancel[/]):")
+					.PageSize(10)
+					.AddChoices(availableCoins.Append("Cancel").ToArray())
+			);
+
+			if (coinToBuy == "Cancel")
+			{
+				AnsiConsole.MarkupLine("[bold yellow]Buy operation canceled.[/]");
+				return;
+			}
+
+			decimal price = RuntimeContext.currentPrices[coinToBuy];
+			decimal quantityToBuy = AnsiConsole.Prompt(
+				new TextPrompt<decimal>($"Enter the quantity of {coinToBuy.ToUpper()} to buy:")
+					.Validate(quantity =>
+					{
+						return quantity > 0 ? ValidationResult.Success() : ValidationResult.Error("[red]Quantity must be greater than zero.[/]");
+					})
+			);
+
+			decimal totalCost = quantityToBuy * price;
+
+			if (RuntimeContext.balance >= totalCost)
+			{
+				var buyResult = tradeOperations.Buy(coinToBuy, quantityToBuy, price);
+				foreach (var result in buyResult)
+				{
+					AnsiConsole.MarkupLine(result);
+				}
+			}
+			else
+			{
+				AnsiConsole.MarkupLine("[bold red]Insufficient balance to complete the purchase.[/]");
+			}
+		}
+
+
 		private static bool IsConsoleAvailable()
 		{
 			try
@@ -208,10 +358,12 @@ namespace Trader
 			AnsiConsole.MarkupLine("\n[bold yellow]=== Menu ===[/]\n");
 			AnsiConsole.MarkupLine("Press [bold green]'C'[/] to clear the database and start over.");
 			AnsiConsole.MarkupLine("Press [bold green]'T'[/] to view transaction history.");
-			AnsiConsole.MarkupLine("Press [bold green]'B'[/] to view verbose balance and portfolio.");
-			AnsiConsole.MarkupLine("Press [bold green]'S'[/] to show database statistics.");
+			AnsiConsole.MarkupLine("Press [bold green]'V'[/] to view verbose balance and portfolio.");
+			AnsiConsole.MarkupLine("Press [bold green]'D'[/] to show database statistics.");
 			AnsiConsole.MarkupLine("Press [bold green]'P'[/] to show program parameters.");
 			AnsiConsole.MarkupLine("Press [bold green]'A'[/] to show backtest analysis strategy");
+			AnsiConsole.MarkupLine("Press [bold green]'B'[/] to buy a coin.");
+			AnsiConsole.MarkupLine("Press [bold green]'S'[/] to sell a coin.");
 			AnsiConsole.MarkupLine("Press [bold green]'Q'[/] to quit the program.");
 			AnsiConsole.MarkupLine("\n[bold yellow]============[/]");
 		}
@@ -230,8 +382,9 @@ namespace Trader
 			table.AddRow("[bold cyan]Analyze Periods/seconds[/]", $"{Parameters.CustomPeriods}/{Parameters.CustomIntervalSeconds * Parameters.CustomPeriods}");
 			table.AddRow("[bold cyan]Stop-Loss Threshold[/]", Parameters.stopLossThreshold.ToString("P"));
 			table.AddRow("[bold cyan]Profit-Taking Threshold[/]", Parameters.profitTakingThreshold.ToString("P"));
-			table.AddRow("[bold cyan]Starting Balance[/]", RuntimeContext.balance.ToString("C"));
+			table.AddRow("[bold cyan]Starting Balance[/]", Parameters.startingBalance.ToString("C"));
 			table.AddRow("[bold cyan]Max Investment Per Coin[/]", Parameters.maxInvestmentPerCoin.ToString("C"));
+			table.AddRow("[bold cyan]Transaction Fee Rate[/]", Parameters.transactionFeeRate.ToString("P"));
 
 			AnsiConsole.Write(table);
 			AnsiConsole.MarkupLine("\n[bold yellow]==========================[/]");
@@ -249,6 +402,8 @@ namespace Trader
 
 			Dictionary<string, decimal> portfolio = new Dictionary<string, decimal>();
 			object lockObject = new object();
+
+			historicalData = historicalData.TakeLast(30).ToList();
 
 			Parallel.ForEach(historicalData, data =>
 			{
@@ -364,9 +519,9 @@ namespace Trader
 			{
 				conn.Open();
 				string statsQuery = @"
-            SELECT name, COUNT(*) AS count, MIN(price) AS minPrice, MAX(price) AS maxPrice, AVG(price) AS avgPrice
-            FROM Prices
-            GROUP BY name;";
+        SELECT name, COUNT(*) AS count, MIN(price) AS minPrice, MAX(price) AS maxPrice, AVG(price) AS avgPrice
+        FROM Prices
+        GROUP BY name;";
 				using (var cmd = new SQLiteCommand(statsQuery, conn))
 				{
 					using (var reader = cmd.ExecuteReader())
@@ -404,12 +559,12 @@ namespace Trader
 
 				// Transaction statistics
 				string transactionStatsQuery = @"
-            SELECT
-                COUNT(*) AS totalTransactions,
-                SUM(CASE WHEN type = 'BUY' THEN 1 ELSE 0 END) AS totalBuys,
-                SUM(CASE WHEN type = 'SELL' THEN 1 ELSE 0 END) AS totalSells,
-                SUM(gain_loss) AS totalGainLoss
-            FROM Transactions;";
+        SELECT
+            COUNT(*) AS totalTransactions,
+            SUM(CASE WHEN type = 'BUY' THEN 1 ELSE 0 END) AS totalBuys,
+            SUM(CASE WHEN type = 'SELL' THEN 1 ELSE 0 END) AS totalSells,
+            SUM(gain_loss) AS totalGainLoss
+        FROM Transactions;";
 				using (var cmd = new SQLiteCommand(transactionStatsQuery, conn))
 				{
 					using (var reader = cmd.ExecuteReader())
@@ -443,9 +598,15 @@ namespace Trader
 						}
 					}
 				}
+
+				// Display total fees
+				decimal totalFees = CalculateTotalFees();
+				AnsiConsole.MarkupLine($"\n[bold yellow]Total Fees Incurred: [bold cyan]{totalFees:C}[/]");
+
 			}
 			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Database statistics ===[/]");
 		}
+
 
 		private static decimal CalculateSMA(string name, int period)
 		{
@@ -465,26 +626,26 @@ namespace Trader
 			{
 				conn.Open();
 				string createTableQuery = @"
-            CREATE TABLE IF NOT EXISTS Prices (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                price DECIMAL(18,8) NOT NULL,
-                sma DECIMAL(18,8),
-                ema DECIMAL(18,8),
-                rsi DECIMAL(18,8),
-                macd DECIMAL(18,8),
-                timestamp DATETIME DEFAULT (datetime('now', 'utc'))
-            );
-			CREATE TABLE IF NOT EXISTS Transactions (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				type TEXT NOT NULL,
-				name TEXT NOT NULL,
-				quantity DECIMAL(18,8) NOT NULL,
-				price DECIMAL(18,8) NOT NULL,
-				balance DECIMAL(18,8) NOT NULL,
-				gain_loss DECIMAL(18,8),
-				timestamp DATETIME DEFAULT (datetime('now', 'utc'))
-			);";
+    CREATE TABLE IF NOT EXISTS Prices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        price DECIMAL(18,8) NOT NULL,
+        sma DECIMAL(18,8),
+        ema DECIMAL(18,8),
+        rsi DECIMAL(18,8),
+        macd DECIMAL(18,8),
+        timestamp DATETIME DEFAULT (datetime('now', 'utc'))
+    );
+    CREATE TABLE IF NOT EXISTS Transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        quantity DECIMAL(18,8) NOT NULL,
+        price DECIMAL(18,8) NOT NULL,
+        fee DECIMAL(18,8) NOT NULL DEFAULT 0.0,
+        gain_loss DECIMAL(18,8),
+        timestamp DATETIME DEFAULT (datetime('now', 'utc'))
+    );";
 				using (var cmd = new SQLiteCommand(createTableQuery, conn))
 				{
 					cmd.ExecuteNonQuery();
@@ -523,23 +684,43 @@ namespace Trader
 					return;
 				}
 
-				// Load the latest balance from the Transactions table
-				string balanceQuery = "SELECT balance FROM Transactions ORDER BY timestamp DESC LIMIT 1;";
-				using (var balanceCmd = new SQLiteCommand(balanceQuery, conn))
+				// Calculate the balance from transactions
+				RuntimeContext.balance = Parameters.startingBalance;
+				string transactionsQuery = "SELECT type, quantity, price, fee, gain_loss FROM Transactions ORDER BY timestamp ASC;";
+				using (var transactionsCmd = new SQLiteCommand(transactionsQuery, conn))
 				{
-					var result = balanceCmd.ExecuteScalar();
-					if (result != null)
+					using (var reader = transactionsCmd.ExecuteReader())
 					{
-						RuntimeContext.balance = Convert.ToDecimal(result);
+						while (reader.Read())
+						{
+							string type = reader.GetString(0);
+							decimal quantity = reader.GetDecimal(1);
+							decimal price = reader.GetDecimal(2);
+							decimal fee = reader.GetDecimal(3);
+							decimal? gainLoss = reader.IsDBNull(4) ? (decimal?)null : reader.GetDecimal(4);
+
+							if (type == "BUY")
+							{
+								RuntimeContext.balance -= (quantity * price) + fee;
+							}
+							else if (type == "SELL")
+							{
+								RuntimeContext.balance += (quantity * price) - fee;
+								if (gainLoss.HasValue)
+								{
+									RuntimeContext.balance += gainLoss.Value;
+								}
+							}
+						}
 					}
 				}
 
 				// Load the portfolio from the Transactions table
 				string portfolioQuery = @"
-            SELECT name, SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS quantity
-            FROM Transactions
-            GROUP BY name
-            HAVING quantity > 0;";
+    SELECT name, SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS quantity
+    FROM Transactions
+    GROUP BY name
+    HAVING quantity > 0;";
 				using (var portfolioCmd = new SQLiteCommand(portfolioQuery, conn))
 				{
 					using (var reader = portfolioCmd.ExecuteReader())
@@ -555,9 +736,11 @@ namespace Trader
 
 				// Load the initial investments from the Transactions table
 				string investmentsQuery = @"
-            SELECT name, SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE 0 END) AS investment
-            FROM Transactions
-            GROUP BY name;";
+    SELECT name, 
+           SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE 0 END) - 
+           SUM(CASE WHEN type = 'SELL' THEN quantity * price ELSE 0 END) AS investment
+    FROM Transactions
+    GROUP BY name;";
 				using (var investmentsCmd = new SQLiteCommand(investmentsQuery, conn))
 				{
 					using (var reader = investmentsCmd.ExecuteReader())
@@ -573,11 +756,11 @@ namespace Trader
 
 				// Load total quantity and cost for cost basis calculations
 				string costBasisQuery = @"
-			SELECT name,
-				SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS totalQuantity,
-				SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE -quantity * price END) AS totalCost
-			FROM Transactions
-			GROUP BY name;";
+    SELECT name,
+        SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS totalQuantity,
+        SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE -quantity * price END) AS totalCost
+    FROM Transactions
+    GROUP BY name;";
 				using (var costBasisCmd = new SQLiteCommand(costBasisQuery, conn))
 				{
 					using (var reader = costBasisCmd.ExecuteReader())
@@ -594,6 +777,7 @@ namespace Trader
 				}
 			}
 		}
+
 
 		private static async Task<Dictionary<string, decimal>> GetCryptoPrices()
 		{
@@ -654,28 +838,28 @@ namespace Trader
 			}
 		}
 
-		public static void RecordTransaction(string type, string coinName, decimal quantity, decimal price, decimal balance, decimal? gainLoss)
+		public static void RecordTransaction(string type, string coinName, decimal quantity, decimal price, decimal fee, decimal? gainLoss)
 		{
 			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
 			{
 				conn.Open();
-				string insertQuery = "INSERT INTO Transactions (type, name, quantity, price, balance, gain_loss) VALUES (@type, @name, @quantity, @price, @balance, @gainLoss);";
+				string insertQuery = "INSERT INTO Transactions (type, name, quantity, price, fee, gain_loss) VALUES (@type, @name, @quantity, @price, @fee, @gainLoss);";
 				using (var cmd = new SQLiteCommand(insertQuery, conn))
 				{
 					cmd.Parameters.AddWithValue("@type", type);
 					cmd.Parameters.AddWithValue("@name", coinName);
 					cmd.Parameters.AddWithValue("@quantity", quantity);
 					cmd.Parameters.AddWithValue("@price", price);
-					cmd.Parameters.AddWithValue("@balance", balance);
+					cmd.Parameters.AddWithValue("@fee", fee);
 					cmd.Parameters.AddWithValue("@gainLoss", gainLoss.HasValue ? (object)gainLoss.Value : DBNull.Value);
 					cmd.ExecuteNonQuery();
 				}
 			}
 		}
 
-		private static void ShowBalance(Dictionary<string, decimal> prices, bool verbose = true)
+		private static void ShowBalance(Dictionary<string, decimal> prices, bool verbose = true, bool showTitle = true)
 		{
-			AnsiConsole.MarkupLine($"\n[bold yellow]=== Balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]\n");
+			if (showTitle) AnsiConsole.MarkupLine($"\n[bold yellow]=== Balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]\n");
 
 			decimal portfolioWorth = 0;
 			decimal totalInvestment = 0;
@@ -689,7 +873,7 @@ namespace Trader
 					decimal value = coin.Value * currentPrice;
 					portfolioWorth += value;
 
-					decimal initialInvestment = RuntimeContext.initialInvestments.ContainsKey(coin.Key) ? RuntimeContext.initialInvestments[coin.Key] : 0;
+					decimal initialInvestment = RuntimeContext.totalCostPerCoin.ContainsKey(coin.Key) ? RuntimeContext.totalCostPerCoin[coin.Key] : 0;
 					totalInvestment += initialInvestment;
 				}
 			}
@@ -698,6 +882,32 @@ namespace Trader
 			decimal initialBalance = Parameters.startingBalance; // Starting balance
 			decimal totalProfitOrLoss = totalWorth - initialBalance;
 			decimal percentageChange = initialBalance > 0 ? (totalProfitOrLoss / initialBalance) * 100 : 0;
+
+			// Calculate current investment gain or loss
+			decimal currentInvestmentGainOrLoss = portfolioWorth - totalInvestment;
+			decimal currentInvestmentPercentageChange = totalInvestment > 0 ? (currentInvestmentGainOrLoss / totalInvestment) * 100 : 0;
+
+			// Calculate total gain or loss from all transactions
+			decimal totalTransactionGainOrLoss = 0;
+			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = "SELECT gain_loss FROM Transactions WHERE gain_loss IS NOT NULL;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					using (var reader = cmd.ExecuteReader())
+					{
+						while (reader.Read())
+						{
+							totalTransactionGainOrLoss += reader.GetDecimal(0);
+						}
+					}
+				}
+			}
+			decimal totalTransactionPercentageChange = initialBalance > 0 ? (totalTransactionGainOrLoss / initialBalance) * 100 : 0;
+
+			// Calculate total fees
+			decimal totalFees = CalculateTotalFees();
 
 			// Create a table for balance information
 			var balanceTable = new Table();
@@ -708,11 +918,22 @@ namespace Trader
 			balanceTable.AddRow("Current balance", $"[bold green]{RuntimeContext.balance:C}[/]");
 			balanceTable.AddRow("Current portfolio worth", $"[bold green]{portfolioWorth:C}[/]");
 			balanceTable.AddRow("Total worth", $"[bold green]{totalWorth:C}[/]");
+			balanceTable.AddRow(totalTransactionGainOrLoss >= 0
+				? "Total Transaction Gain (Excluding Current Portfolio)"
+				: "Total Transaction Loss (Excluding Current Portfolio)", totalTransactionGainOrLoss >= 0
+				? $"[bold green]{totalTransactionGainOrLoss:C} ({totalTransactionPercentageChange:N2}%)[/]"
+				: $"[bold red]{Math.Abs(totalTransactionGainOrLoss):C} ({totalTransactionPercentageChange:N2}%)[/]");
+			balanceTable.AddRow(currentInvestmentGainOrLoss >= 0
+				? "Current Portfolio Gain"
+				: "Current Portfolio Loss", currentInvestmentGainOrLoss >= 0
+				? $"[bold green]{currentInvestmentGainOrLoss:C} ({currentInvestmentPercentageChange:N2}%)[/]"
+				: $"[bold red]{Math.Abs(currentInvestmentGainOrLoss):C} ({currentInvestmentPercentageChange:N2}%)[/]");
 			balanceTable.AddRow(totalProfitOrLoss >= 0
-				? "Gains"
-				: "Losses", totalProfitOrLoss >= 0
+				? "Overall Gains"
+				: "Overall Losses", totalProfitOrLoss >= 0
 				? $"[bold green]{totalProfitOrLoss:C} ({percentageChange:N2}%)[/]"
 				: $"[bold red]{Math.Abs(totalProfitOrLoss):C} ({percentageChange:N2}%)[/]");
+			balanceTable.AddRow("Total Fees Incurred", $"[bold cyan]{totalFees:C}[/]");
 
 			AnsiConsole.Write(balanceTable);
 
@@ -741,7 +962,7 @@ namespace Trader
 						{
 							decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
 							decimal value = coin.Value * currentPrice;
-							decimal initialInvestment = RuntimeContext.initialInvestments.ContainsKey(coin.Key) ? RuntimeContext.initialInvestments[coin.Key] : 0;
+							decimal initialInvestment = RuntimeContext.totalCostPerCoin.ContainsKey(coin.Key) ? RuntimeContext.totalCostPerCoin[coin.Key] : 0;
 							decimal profitOrLoss = value - initialInvestment;
 
 							decimal percentageOfPortfolio = portfolioWorth > 0 ? (value / portfolioWorth) * 100 : 0;
@@ -765,68 +986,201 @@ namespace Trader
 				AnsiConsole.Write(portfolioTable);
 			}
 
-			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]");
+			if (showTitle) AnsiConsole.MarkupLine($"\n[bold yellow]=== End of balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]");
 		}
 
 		private static void ShowTransactionHistory()
 		{
 			AnsiConsole.MarkupLine("\n[bold yellow]=== Transactions History ===[/]\n");
 
+			var (sortColumn, sortOrder) = PromptForSortOptions();
+			bool showAllRecords = PromptForShowAllRecords();
+			int recordsPerPage = showAllRecords ? int.MaxValue : PromptForRecordsPerPage();
+			int currentPage = 1;
+			int totalRecords = 0;
+			decimal totalFees = 0;
+
 			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
 			{
 				conn.Open();
-				string query = @"
-            SELECT name, type, quantity, price, gain_loss, timestamp
-            FROM Transactions
-            ORDER BY name, timestamp;";
-				using (var cmd = new SQLiteCommand(query, conn))
+
+				// Get the total number of records
+				string countQuery = "SELECT COUNT(*) FROM Transactions;";
+				using (var countCmd = new SQLiteCommand(countQuery, conn))
 				{
-					using (var reader = cmd.ExecuteReader())
+					totalRecords = Convert.ToInt32(countCmd.ExecuteScalar());
+				}
+
+				int totalPages = (int)Math.Ceiling((double)totalRecords / recordsPerPage);
+
+				while (true)
+				{
+					int offset = (currentPage - 1) * recordsPerPage;
+
+					string query = $@"
+            SELECT name, type, quantity, price, fee, gain_loss, timestamp
+            FROM Transactions
+            ORDER BY {sortColumn} {sortOrder}
+            LIMIT {recordsPerPage} OFFSET {offset};";
+
+					using (var cmd = new SQLiteCommand(query, conn))
 					{
-						var table = new Table();
-						table.AddColumn("Coin");
-						table.AddColumn("Type");
-						table.AddColumn("Quantity");
-						table.AddColumn("Price");
-						table.AddColumn("Gain/Loss");
-						table.AddColumn("Timestamp");
-
-						while (reader.Read())
+						using (var reader = cmd.ExecuteReader())
 						{
-							string name = reader.GetString(0);
-							string type = reader.GetString(1);
-							decimal quantity = reader.GetDecimal(2);
-							decimal price = reader.GetDecimal(3);
-							object gainLossObj = reader.GetValue(4);
-							decimal? gainLoss = gainLossObj != DBNull.Value ? (decimal?)gainLossObj : null;
-							DateTime timestamp = reader.GetDateTime(5);
+							var table = new Table();
+							table.AddColumn("Coin");
+							table.AddColumn("Type");
+							table.AddColumn("Quantity");
+							table.AddColumn("Price");
+							table.AddColumn("Fee");
+							table.AddColumn("Gain/Loss");
+							table.AddColumn("Timestamp");
 
-							string gainLossStr = gainLoss.HasValue
-								? (gainLoss.Value >= 0 ? $"[green]{gainLoss.Value:C}[/]" : $"[red]{gainLoss.Value:C}[/]")
-								: "N/A";
+							while (reader.Read())
+							{
+								string name = reader.GetString(0);
+								string type = reader.GetString(1);
+								decimal quantity = reader.GetDecimal(2);
+								decimal price = reader.GetDecimal(3);
+								decimal fee = reader.GetDecimal(4);
+								object gainLossObj = reader.GetValue(5);
+								decimal? gainLoss = gainLossObj != DBNull.Value ? (decimal?)gainLossObj : null;
+								DateTime timestamp = reader.GetDateTime(6);
 
+								totalFees += fee;
+
+								string gainLossStr = gainLoss.HasValue
+									? (gainLoss.Value >= 0 ? $"[green]{gainLoss.Value:C}[/]" : $"[red]{gainLoss.Value:C}[/]")
+									: "N/A";
+
+								table.AddRow(
+									name.ToUpper(),
+									type,
+									quantity.ToString("N4"),
+									price.ToString("C"),
+									fee.ToString("C"),
+									gainLossStr,
+									timestamp.ToString("yyyy-MM-dd HH:mm:ss")
+								);
+							}
+
+							// Add a footer row to display the total fees
+							table.AddEmptyRow();
 							table.AddRow(
-								name.ToUpper(),
-								type,
-								quantity.ToString("N4"),
-								price.ToString("C"),
-								gainLossStr,
-								timestamp.ToString("yyyy-MM-dd HH:mm:ss")
+								new Markup("[bold yellow]Total Fees[/]"),
+								new Markup(""),
+								new Markup(""),
+								new Markup(""),
+								new Markup($"[bold cyan]{totalFees:C}[/]"),
+								new Markup(""),
+								new Markup("")
 							);
-						}
 
-						AnsiConsole.Write(table);
+							AnsiConsole.Write(table);
+						}
+					}
+
+					if (showAllRecords)
+					{
+						break;
+					}
+
+					AnsiConsole.MarkupLine($"\n[bold yellow]Page {currentPage} of {totalPages}[/]");
+
+					if (currentPage < totalPages)
+					{
+						var nextPage = AnsiConsole.Prompt(
+							new SelectionPrompt<string>()
+								.Title("Select an option:")
+								.AddChoices("Next Page", "Exit")
+						);
+
+						if (nextPage == "Next Page")
+						{
+							currentPage++;
+						}
+						else
+						{
+							break;
+						}
+					}
+					else
+					{
+						break;
 					}
 				}
 			}
+
 			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Transactions History ===[/]");
+		}
+
+		private static (string column, string order) PromptForSortOptions()
+		{
+			var columns = new[] { "timestamp", "name", "type", "quantity", "price", "fee", "gain_loss" };
+			var sortColumn = AnsiConsole.Prompt(
+				new SelectionPrompt<string>()
+					.Title("Select a column to sort by:")
+					.AddChoices(columns)
+			);
+
+			var sortOrder = AnsiConsole.Prompt(
+				new SelectionPrompt<string>()
+					.Title("Select sort order:")
+					.AddChoices("ASC", "DESC")
+			);
+
+			return (sortColumn, sortOrder);
+		}
+
+		private static int PromptForRecordsPerPage()
+		{
+			return AnsiConsole.Prompt(
+				new TextPrompt<int>("Enter the number of records per page:")
+					.Validate(records =>
+					{
+						return records > 0 ? ValidationResult.Success() : ValidationResult.Error("[red]Number of records must be greater than zero.[/]");
+					})
+			);
+		}
+
+		private static bool PromptForShowAllRecords()
+		{
+			var choice = AnsiConsole.Prompt(
+				new SelectionPrompt<string>()
+					.Title("Do you want to show all records or paginate?")
+					.AddChoices("Show All", "Paginate")
+			);
+
+			return choice == "Show All";
+		}
+
+
+		private static decimal CalculateTotalFees()
+		{
+			decimal totalFees = 0;
+
+			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = "SELECT SUM(fee) FROM Transactions;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					var result = cmd.ExecuteScalar();
+					if (result != DBNull.Value && result != null)
+					{
+						totalFees = Convert.ToDecimal(result);
+					}
+				}
+			}
+
+			return totalFees;
 		}
 
 		private static void AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds)
 		{
 			DateTime startAnalysisTimeStamp = DateTime.Now.ToUniversalTime();
 
-			AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Index: {++RuntimeContext.currentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
+			AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Counter: {++RuntimeContext.currentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
 
 			foreach (var coin in prices)
 			{
@@ -911,12 +1265,20 @@ namespace Trader
 					if (profitOrLoss <= Parameters.stopLossThreshold)
 					{
 						operationsTable.AddRow("STOP-LOSS", $"[bold red]Selling {coin.Key.ToUpper()} to prevent further loss.[/]");
-						tradeOperations.Sell(coin.Key, coin.Value);
+						var sellResult = tradeOperations.Sell(coin.Key, coin.Value);
+						foreach (var result in sellResult)
+						{
+							operationsTable.AddRow("SELL Result", result);
+						}
 					}
 					else if (profitOrLoss >= Parameters.profitTakingThreshold)
 					{
 						operationsTable.AddRow("PROFIT-TAKING", $"[bold green]Selling {coin.Key.ToUpper()} to secure profit.[/]");
-						tradeOperations.Sell(coin.Key, coin.Value);
+						var sellResult = tradeOperations.Sell(coin.Key, coin.Value);
+						foreach (var result in sellResult)
+						{
+							operationsTable.AddRow("SELL Result", result);
+						}
 					}
 				}
 
@@ -930,7 +1292,11 @@ namespace Trader
 					{
 						if (operationsAllowed)
 						{
-							tradeOperations.Buy(coin.Key, null, coin.Value);
+							var buyResult = tradeOperations.Buy(coin.Key, null, coin.Value);
+							foreach (var result in buyResult)
+							{
+								operationsTable.AddRow("BUY Result", result);
+							}
 						}
 						else
 						{
@@ -945,7 +1311,11 @@ namespace Trader
 
 					if (operationsAllowed)
 					{
-						tradeOperations.Sell(coin.Key, coin.Value);
+						var sellResult = tradeOperations.Sell(coin.Key, coin.Value);
+						foreach (var result in sellResult)
+						{
+							operationsTable.AddRow("SELL Result", result);
+						}
 					}
 					else
 					{
@@ -959,8 +1329,12 @@ namespace Trader
 				}
 			}
 
-			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Index: {RuntimeContext.currentPeriodIndex} ===[/]");
+			AnsiConsole.MarkupLine($"\n[bold cyan]Current balance[/]:");
+			ShowBalance(prices, true, false);
+
+			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Counter: {RuntimeContext.currentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
 		}
+
 
 		private static (int bestShortPeriod, int bestLongPeriod, int bestSignalPeriod) FindBestMACDPeriods(List<decimal> prices)
 		{
