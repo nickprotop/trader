@@ -63,7 +63,11 @@ namespace Trader
             DateTime nextIterationTime = DateTime.UtcNow;
             Dictionary<string, decimal> prices = new Dictionary<string, decimal>();
 
-            try
+			// Load historical data and run backtest
+			var historicalData = LoadHistoricalData();
+			BacktestStrategy(historicalData);
+
+			try
             {
                 while (true)
                 {
@@ -189,7 +193,104 @@ namespace Trader
             AnsiConsole.MarkupLine("\n[bold yellow]==========================[/]");
         }
 
-        private static void ResetDatabase()
+		private static void BacktestStrategy(List<HistoricalData> historicalData)
+		{
+			decimal initialBalance = Parameters.startingBalance;
+			decimal balance = initialBalance;
+			decimal portfolioValue = 0;
+			decimal totalInvestment = 0;
+			decimal totalProfitOrLoss = 0;
+
+			Dictionary<string, decimal> portfolio = new Dictionary<string, decimal>();
+			object lockObject = new object();
+
+			Parallel.ForEach(historicalData, data =>
+			{
+				var prices = new Dictionary<string, decimal> { { data.Name, data.Price } };
+				var recentHistory = historicalData.Where(h => h.Name == data.Name && h.Timestamp <= data.Timestamp)
+												  .Select(h => h.Price).ToList();
+
+				if (recentHistory.Count < Parameters.CustomPeriods)
+					return;
+
+				decimal rsi = CalculateRSI(recentHistory, recentHistory.Count);
+				decimal sma = CalculateSMA(recentHistory, recentHistory.Count);
+				decimal ema = CalculateEMASingle(recentHistory, recentHistory.Count);
+				var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = CalculateMACD(recentHistory);
+
+				lock (lockObject)
+				{
+					// Trading signals
+					if (rsi < 30 && data.Price < sma && data.Price < ema && macd < 0)
+					{
+						// Buy signal
+						decimal quantity = balance / data.Price;
+						balance -= quantity * data.Price;
+						if (!portfolio.ContainsKey(data.Name))
+							portfolio[data.Name] = 0;
+						portfolio[data.Name] += quantity;
+						totalInvestment += quantity * data.Price;
+					}
+					else if (rsi > 70 && portfolio.ContainsKey(data.Name) && portfolio[data.Name] > 0 && data.Price > sma && data.Price > ema && macd > 0)
+					{
+						// Sell signal
+						decimal quantity = portfolio[data.Name];
+						balance += quantity * data.Price;
+						portfolio[data.Name] = 0;
+						totalProfitOrLoss += (quantity * data.Price) - totalInvestment;
+					}
+
+					// Update portfolio value
+					portfolioValue = portfolio.Sum(p => p.Value * data.Price);
+				}
+			});
+
+			decimal finalBalance = balance + portfolioValue;
+			decimal totalReturn = (finalBalance - initialBalance) / initialBalance * 100;
+
+			// Create a table for backtest results
+			var table = new Table();
+			table.AddColumn("Metric");
+			table.AddColumn("Value");
+
+			table.AddRow("Initial Balance", $"{initialBalance:C}");
+			table.AddRow("Final Balance", $"{finalBalance:C}");
+			table.AddRow("Total Return", $"{totalReturn:N2}%");
+			table.AddRow("Total Profit/Loss", $"{totalProfitOrLoss:C}");
+
+			AnsiConsole.Write(table);
+		}
+
+		private static List<HistoricalData> LoadHistoricalData()
+		{
+			var historicalData = new List<HistoricalData>();
+
+			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = "SELECT name, price, timestamp FROM Prices ORDER BY timestamp ASC;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					using (var reader = cmd.ExecuteReader())
+					{
+						while (reader.Read())
+						{
+							historicalData.Add(new HistoricalData
+							{
+								Name = reader.GetString(0),
+								Price = reader.GetDecimal(1),
+								Timestamp = reader.GetDateTime(2)
+							});
+						}
+					}
+				}
+			}
+
+			return historicalData;
+		}
+
+
+		private static void ResetDatabase()
         {
             if (File.Exists(Parameters.dbPath))
             {
@@ -713,8 +814,8 @@ namespace Trader
 
 				decimal rsi = CalculateRSI(recentHistory, recentHistory.Count);
 				decimal sma = CalculateSMA(recentHistory, recentHistory.Count);
-				decimal ema = CalculateEMA(recentHistory, recentHistory.Count);
-				decimal macd = CalculateMACD(recentHistory);
+				decimal ema = CalculateEMASingle(recentHistory, recentHistory.Count);
+				var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = CalculateMACD(recentHistory);
 				decimal priceChangeWindow = CalculatePriceChange(recentHistory);
 
 				// Retrieve the first data timestamp and calculate the time difference from now
@@ -735,7 +836,11 @@ namespace Trader
 				table.AddRow($"RSI ({recentHistory.Count})", $"[bold green]{rsi:N2}[/]");
 				table.AddRow($"SMA ({recentHistory.Count})", $"[bold green]${sma:N2}[/]");
 				table.AddRow($"EMA ({recentHistory.Count})", $"[bold green]${ema:N2}[/]");
+
 				table.AddRow("MACD", $"[bold green]${macd:N2}[/]");
+				table.AddRow("Best Short Period", $"[bold green]{bestShortPeriod}[/]");
+				table.AddRow("Best Long Period", $"[bold green]{bestLongPeriod}[/]");
+				table.AddRow("Best Signal Period", $"[bold green]{bestSignalPeriod}[/]");
 
 				// Market sentiment analysis
 				string sentiment = "NEUTRAL";
@@ -811,51 +916,150 @@ namespace Trader
 			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Index: {RuntimeContext.currentPeriodIndex} ===[/]");
 		}
 
+		private static (int bestShortPeriod, int bestLongPeriod, int bestSignalPeriod) FindBestMACDPeriods(List<decimal> prices)
+		{
+			int bestShortPeriod = 12;
+			int bestLongPeriod = 26;
+			int bestSignalPeriod = 9;
+			decimal bestPerformance = decimal.MinValue;
+			object lockObject = new object();
 
-		private static decimal CalculateEMA(List<decimal> prices, int periods)
-        {
-            if (prices == null || prices.Count == 0 || periods <= 0)
-                throw new ArgumentException("Invalid input for EMA calculation.");
+			Parallel.For(5, 16, shortPeriod =>
+			{
+				Parallel.For(20, 31, longPeriod =>
+				{
+					Parallel.For(5, 16, signalPeriod =>
+					{
+						if (shortPeriod >= longPeriod) return;
 
-            decimal multiplier = 2m / (periods + 1);
-            decimal ema = prices[0]; // Start with the first price as the initial EMA
+						decimal performance = EvaluateMACDPerformance(prices, shortPeriod, longPeriod, signalPeriod);
+						lock (lockObject)
+						{
+							if (performance > bestPerformance)
+							{
+								bestPerformance = performance;
+								bestShortPeriod = shortPeriod;
+								bestLongPeriod = longPeriod;
+								bestSignalPeriod = signalPeriod;
+							}
+						}
+					});
+				});
+			});
 
-            for (int i = 1; i < prices.Count; i++)
-            {
-                ema = ((prices[i] - ema) * multiplier) + ema;
-            }
+			return (bestShortPeriod, bestLongPeriod, bestSignalPeriod);
+		}
 
-            return ema;
-        }
+		private static decimal EvaluateMACDPerformance(List<decimal> prices, int shortPeriod, int longPeriod, int signalPeriod)
+		{
+			List<decimal> macdLine = CalculateMACDLine(prices, shortPeriod, longPeriod);
+			List<decimal> signalLine = CalculateEMA(macdLine, signalPeriod);
 
-        private static decimal CalculateMACD(List<decimal> prices)
-        {
-            if (prices == null || prices.Count == 0)
-                throw new ArgumentException("Invalid input for MACD calculation.");
+			decimal performance = 0;
+			bool inPosition = false;
+			decimal entryPrice = 0;
 
-            int shortPeriod = 12;
-            int longPeriod = 26;
-            int signalPeriod = 9;
+			for (int i = signalPeriod; i < macdLine.Count; i++)
+			{
+				if (macdLine[i] > signalLine[i] && !inPosition)
+				{
+					inPosition = true;
+					entryPrice = prices[i];
+				}
+				else if (macdLine[i] < signalLine[i] && inPosition)
+				{
+					inPosition = false;
+					performance += prices[i] - entryPrice;
+				}
+			}
 
-            decimal shortEMA = CalculateEMA(prices, shortPeriod);
-            decimal longEMA = CalculateEMA(prices, longPeriod);
-            decimal macd = shortEMA - longEMA;
+			return performance;
+		}
 
-            List<decimal> macdHistory = new List<decimal>();
-            for (int i = 0; i < prices.Count; i++)
-            {
-                decimal shortEma = CalculateEMA(prices.Take(i + 1).ToList(), shortPeriod);
-                decimal longEma = CalculateEMA(prices.Take(i + 1).ToList(), longPeriod);
-                macdHistory.Add(shortEma - longEma);
-            }
+		private static List<decimal> CalculateMACDLine(List<decimal> prices, int shortPeriod, int longPeriod)
+		{
+			List<decimal> macdLine = new List<decimal>();
+			List<decimal> shortEMA = CalculateEMAList(prices, shortPeriod);
+			List<decimal> longEMA = CalculateEMAList(prices, longPeriod);
 
-            decimal signalLine = CalculateEMA(macdHistory, signalPeriod);
-            decimal macdHistogram = macd - signalLine;
+			for (int i = 0; i < prices.Count; i++)
+			{
+				macdLine.Add(shortEMA[i] - longEMA[i]);
+			}
 
-            return macdHistogram;
-        }
+			return macdLine;
+		}
 
-        private static List<(decimal Price, DateTime Timestamp)> GetRecentHistoryRows(string coin, int rowCount)
+		private static List<decimal> CalculateEMAList(List<decimal> prices, int periods)
+		{
+			List<decimal> emaList = new List<decimal>();
+			decimal multiplier = 2m / (periods + 1);
+			decimal ema = prices[0]; // Start with the first price as the initial EMA
+
+			for (int i = 0; i < prices.Count; i++)
+			{
+				if (i == 0)
+				{
+					emaList.Add(ema);
+				}
+				else
+				{
+					ema = ((prices[i] - ema) * multiplier) + ema;
+					emaList.Add(ema);
+				}
+			}
+
+			return emaList;
+		}
+
+		private static List<decimal> CalculateEMA(List<decimal> prices, int periods)
+		{
+			List<decimal> emaList = new List<decimal>();
+			decimal multiplier = 2m / (periods + 1);
+			decimal ema = prices[0]; // Start with the first price as the initial EMA
+
+			for (int i = 0; i < prices.Count; i++)
+			{
+				if (i == 0)
+				{
+					emaList.Add(ema);
+				}
+				else
+				{
+					ema = ((prices[i] - ema) * multiplier) + ema;
+					emaList.Add(ema);
+				}
+			}
+
+			return emaList;
+		}
+
+		private static (decimal macdValue, int bestShortPeriod, int bestLongPeriod, int bestSignalPeriod) CalculateMACD(List<decimal> prices)
+		{
+			var (bestShortPeriod, bestLongPeriod, bestSignalPeriod) = FindBestMACDPeriods(prices);
+			List<decimal> macdLine = CalculateMACDLine(prices, bestShortPeriod, bestLongPeriod);
+			List<decimal> signalLine = CalculateEMA(macdLine, bestSignalPeriod);
+
+			decimal macdValue = macdLine.Last() - signalLine.Last();
+			return (macdValue, bestShortPeriod, bestLongPeriod, bestSignalPeriod);
+		}
+
+		private static decimal CalculateEMASingle(List<decimal> prices, int periods)
+		{
+			if (prices == null || prices.Count == 0 || periods <= 0)
+				throw new ArgumentException("Invalid input for EMA calculation.");
+
+			decimal multiplier = 2m / (periods + 1);
+			decimal ema = prices[0]; // Start with the first price as the initial EMA
+
+			for (int i = 1; i < prices.Count; i++)
+			{
+				ema = ((prices[i] - ema) * multiplier) + ema;
+			}
+
+			return ema;
+		}
+		private static List<(decimal Price, DateTime Timestamp)> GetRecentHistoryRows(string coin, int rowCount)
         {
             var recentHistory = new List<(decimal Price, DateTime Timestamp)>();
             using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
