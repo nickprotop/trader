@@ -41,7 +41,9 @@ namespace Trader
 
         private static async Task Main(string[] args)
         {
-            bool clearPreviousTransactions = args.Contains("-c");
+			Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+			bool clearPreviousTransactions = args.Contains("-c");
 
             AnsiConsole.MarkupLine("[bold yellow]=== Welcome to the Crypto Trading Bot ===[/]");
 
@@ -662,119 +664,144 @@ namespace Trader
             AnsiConsole.MarkupLine("\n[bold yellow]=== End of Transactions History ===[/]");
         }
 
-        private static void AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds)
-        {
-            AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Index: {++RuntimeContext.currentPeriodIndex} ===[/]");
+		private static void AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds)
+		{
+			DateTime startAnalysisTimeStamp = DateTime.Now.ToUniversalTime();
 
-            foreach (var coin in prices)
-            {
-                bool operationsAllowed = true;
+			AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Index: {++RuntimeContext.currentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
 
-                AnsiConsole.MarkupLine($"\n[bold cyan]{coin.Key.ToUpper()}[/]:");
+			foreach (var coin in prices)
+			{
+				bool operationsAllowed = true;
 
-                if (!RuntimeContext.priceHistory.ContainsKey(coin.Key))
-                    continue;
+				AnsiConsole.MarkupLine($"\n[bold cyan]{coin.Key.ToUpper()}[/]:");
 
-                var recentHistoryData = GetRecentHistoryRows(coin.Key, Parameters.CustomPeriods); //GetRecentHistorySeconds(coin.Key, analysisWindowSeconds);
+				if (!RuntimeContext.priceHistory.ContainsKey(coin.Key))
+					continue;
 
-                if (recentHistoryData.Count < 2) // Need at least 2 data points to calculate change
-                    continue;
+				var recentHistoryData = GetRecentHistoryRows(coin.Key, Parameters.CustomPeriods); //GetRecentHistorySeconds(coin.Key, analysisWindowSeconds);
 
-                var recentHistory = recentHistoryData.Select(x => x.Price).ToList();
+				var table = new Table();
+				table.AddColumn("Indicator");
+				table.AddColumn("Value");
 
-                if (recentHistory.Count < customPeriods)
-                {
-                    AnsiConsole.MarkupLine($"\n[bold red]Insufficient data points for {coin.Key} analysis.[/]");
-                    operationsAllowed = false;
-                }
+				if (recentHistoryData.Count < 2) // Need at least 2 data points to calculate change
+				{
+					table.AddRow("Analysis Status", $"[bold red]Insufficient data points for {coin.Key} analysis.[/]");
+					AnsiConsole.Write(table);
+					continue;
+				}
 
-                decimal rsi = CalculateRSI(recentHistory, recentHistory.Count);
-                decimal sma = CalculateSMA(recentHistory, recentHistory.Count);
-                decimal ema = CalculateEMA(recentHistory, recentHistory.Count);
-                decimal macd = CalculateMACD(recentHistory);
-                decimal priceChangeWindow = CalculatePriceChange(recentHistory);
+				var recentHistory = recentHistoryData.Select(x => x.Price).ToList();
 
-                // Retrieve the first data timestamp and calculate the time difference from now
-                DateTime firstTimestamp = recentHistoryData.First().Timestamp; // (coin.Key, analysisWindowSeconds);
-                TimeSpan timeDifference = DateTime.UtcNow - firstTimestamp;
+				if (recentHistory.Count < customPeriods)
+				{
+					table.AddRow("Analysis Status", $"[bold red]Insufficient data points for {coin.Key} analysis.[/]");
+					operationsAllowed = false;
+				}
 
-                var table = new Table();
-                table.AddColumn("Indicator");
-                table.AddColumn("Value");
+				decimal rsi = CalculateRSI(recentHistory, recentHistory.Count);
+				decimal sma = CalculateSMA(recentHistory, recentHistory.Count);
+				decimal ema = CalculateEMA(recentHistory, recentHistory.Count);
+				decimal macd = CalculateMACD(recentHistory);
+				decimal priceChangeWindow = CalculatePriceChange(recentHistory);
 
-                table.AddRow("Current Price", $"[bold green]${coin.Value:N2}[/]");
-                table.AddRow($"{timeDifference.TotalMinutes:N2}m Change", $"[bold green]{priceChangeWindow:N2}%[/]");
-                table.AddRow($"RSI ({recentHistory.Count})", $"[bold green]{rsi:N2}[/]");
-                table.AddRow($"SMA ({recentHistory.Count})", $"[bold green]${sma:N2}[/]");
-                table.AddRow($"EMA ({recentHistory.Count})", $"[bold green]${ema:N2}[/]");
-                table.AddRow("MACD", $"[bold green]${macd:N2}[/]");
+				// Retrieve the first data timestamp and calculate the time difference from now
+				DateTime firstTimestamp = recentHistoryData.First().Timestamp; // (coin.Key, analysisWindowSeconds);
+				TimeSpan timeDifference = DateTime.UtcNow - firstTimestamp;
 
-                // Market sentiment analysis
-                string sentiment = "NEUTRAL";
-                if (rsi < 30) sentiment = "OVERSOLD";
-                else if (rsi > 70) sentiment = "OVERBOUGHT";
+				table.AddRow("Current Price", $"[bold green]${coin.Value:N2}[/]");
+				table.AddRow("First Price Timestamp", $"[bold green]{firstTimestamp:yyyy-MM-dd HH:mm:ss}[/]");
+				table.AddRow("Last Price Timestamp", $"[bold green]{recentHistoryData.Last().Timestamp:yyyy-MM-dd HH:mm:ss}[/]");
+                table.AddRow("Time span", $"[bold green]{(recentHistoryData.Last().Timestamp - recentHistoryData.First().Timestamp).ToString()}[/]");
 
-                table.AddRow("Market Sentiment", $"[bold green]{sentiment}[/]");
+				string periodsIncludedColor = recentHistory.Count < customPeriods ? "red" : "green";
+				table.AddRow("Periods included", $"[bold {periodsIncludedColor}]{recentHistory.Count()}/{customPeriods}[/]");
+                
+                string priceChangeColor = priceChangeWindow >= 0 ? "green" : "red";
+				table.AddRow($"Price Change", $"[bold {priceChangeColor}]{priceChangeWindow:N2}%[/]");
 
-                AnsiConsole.Write(table);
+				table.AddRow($"RSI ({recentHistory.Count})", $"[bold green]{rsi:N2}[/]");
+				table.AddRow($"SMA ({recentHistory.Count})", $"[bold green]${sma:N2}[/]");
+				table.AddRow($"EMA ({recentHistory.Count})", $"[bold green]${ema:N2}[/]");
+				table.AddRow("MACD", $"[bold green]${macd:N2}[/]");
 
-                // Stop-loss and profit-taking strategy
-                if (RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0)
-                {
-                    decimal initialInvestment = RuntimeContext.initialInvestments.ContainsKey(coin.Key) ? RuntimeContext.initialInvestments[coin.Key] : 0;
-                    decimal currentValue = RuntimeContext.portfolio[coin.Key] * coin.Value;
-                    decimal profitOrLoss = (currentValue - initialInvestment) / initialInvestment;
+				// Market sentiment analysis
+				string sentiment = "NEUTRAL";
+				if (rsi < 30) sentiment = "OVERSOLD";
+				else if (rsi > 70) sentiment = "OVERBOUGHT";
 
-                    if (profitOrLoss <= Parameters.stopLossThreshold)
-                    {
-                        AnsiConsole.MarkupLine($"\n[bold red]STOP-LOSS Triggered: Selling {coin.Key} to prevent further loss.[/]");
-                        tradeOperations.Sell(coin.Key, coin.Value);
-                    }
-                    else if (profitOrLoss >= Parameters.profitTakingThreshold)
-                    {
-                        AnsiConsole.MarkupLine($"\n[bold green]PROFIT-TAKING Triggered: Selling {coin.Key} to secure profit.[/]");
-                        tradeOperations.Sell(coin.Key, coin.Value);
-                    }
-                }
+				table.AddRow("Market Sentiment", $"[bold green]{sentiment}[/]");
 
-                // Trading signals with confidence levels
-                if (rsi < 30 && coin.Value < sma && coin.Value < ema && macd < 0)
-                {
-                    decimal confidence = (30 - rsi) / 30 * 100;
-                    AnsiConsole.MarkupLine($"\n[bold green]BUY Signal (Confidence: {confidence:N2}%)[/]");
+				AnsiConsole.Write(table);
 
-                    if (RuntimeContext.balance > 0)
-                    {
-                        if (operationsAllowed)
-                        {
-                            tradeOperations.Buy(coin.Key, null, coin.Value);
-                        }
-                        else
-                        {
-                            AnsiConsole.MarkupLine($"\n[bold red]Insufficient data points for {coin.Key} analysis. Skipping buy operation.[/]");
-                        }
-                    }
-                }
-                else if (rsi > 70 && RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0 && coin.Value > sma && coin.Value > ema && macd > 0)
-                {
-                    decimal confidence = (rsi - 70) / 30 * 100;
-                    AnsiConsole.MarkupLine($"\n[bold cyan]SELL Signal (Confidence: {confidence:N2}%)[/]");
+				var operationsTable = new Table();
+				operationsTable.AddColumn("Operation");
+				operationsTable.AddColumn("Details");
 
-                    if (operationsAllowed)
-                    {
-                        tradeOperations.Sell(coin.Key, coin.Value);
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine($"\n[bold red]Insufficient data points for {coin.Key} analysis. Skipping sell operation.[/]");
-                    }
-                }
-            }
+				// Stop-loss and profit-taking strategy
+				if (RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0)
+				{
+					decimal initialInvestment = RuntimeContext.initialInvestments.ContainsKey(coin.Key) ? RuntimeContext.initialInvestments[coin.Key] : 0;
+					decimal currentValue = RuntimeContext.portfolio[coin.Key] * coin.Value;
+					decimal profitOrLoss = (currentValue - initialInvestment) / initialInvestment;
 
-            AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Index: {RuntimeContext.currentPeriodIndex} ===[/]");
-        }
+					if (profitOrLoss <= Parameters.stopLossThreshold)
+					{
+						operationsTable.AddRow("STOP-LOSS", $"[bold red]Selling {coin.Key} to prevent further loss.[/]");
+						tradeOperations.Sell(coin.Key, coin.Value);
+					}
+					else if (profitOrLoss >= Parameters.profitTakingThreshold)
+					{
+						operationsTable.AddRow("PROFIT-TAKING", $"[bold green]Selling {coin.Key} to secure profit.[/]");
+						tradeOperations.Sell(coin.Key, coin.Value);
+					}
+				}
 
-        private static decimal CalculateEMA(List<decimal> prices, int periods)
+				// Trading signals with confidence levels
+				if (rsi < 30 && coin.Value < sma && coin.Value < ema && macd < 0)
+				{
+					decimal confidence = (30 - rsi) / 30 * 100;
+					operationsTable.AddRow("BUY Signal", $"[bold green]Confidence: {confidence:N2}%[/]");
+
+					if (RuntimeContext.balance > 0)
+					{
+						if (operationsAllowed)
+						{
+							tradeOperations.Buy(coin.Key, null, coin.Value);
+						}
+						else
+						{
+							operationsTable.AddRow("BUY Operation", $"[bold red]Skipping buy operation because analysis is not valid.[/]");
+						}
+					}
+				}
+				else if (rsi > 70 && RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0 && coin.Value > sma && coin.Value > ema && macd > 0)
+				{
+					decimal confidence = (rsi - 70) / 30 * 100;
+					operationsTable.AddRow("SELL Signal", $"[bold cyan]Confidence: {confidence:N2}%[/]");
+
+					if (operationsAllowed)
+					{
+						tradeOperations.Sell(coin.Key, coin.Value);
+					}
+					else
+					{
+						operationsTable.AddRow("SELL Operation", $"[bold red]Skipping sell operation because analysis is not valid.[/]");
+					}
+				}
+
+				if (operationsTable.Rows.Count > 0)
+				{
+					AnsiConsole.Write(operationsTable);
+				}
+			}
+
+			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Index: {RuntimeContext.currentPeriodIndex} ===[/]");
+		}
+
+
+		private static decimal CalculateEMA(List<decimal> prices, int periods)
         {
             if (prices == null || prices.Count == 0 || periods <= 0)
                 throw new ArgumentException("Invalid input for EMA calculation.");
