@@ -113,7 +113,6 @@ namespace Trader
 
 						if (key.Key == ConsoleKey.A)
 						{
-							//BacktestStrategy(LoadHistoricalData());
 							AnalyzeIndicators(RuntimeContext.currentPrices, Parameters.CustomPeriods, Parameters.CustomIntervalSeconds * Parameters.CustomPeriods, true);
 							PrintMenu();
 						}
@@ -127,6 +126,12 @@ namespace Trader
 						if (key.Key == ConsoleKey.B)
 						{
 							BuyCoin();
+							PrintMenu();
+						}
+
+						if (key.Key == ConsoleKey.K)
+						{
+							BacktestStrategy(LoadHistoricalData());
 							PrintMenu();
 						}
 					}
@@ -177,6 +182,12 @@ namespace Trader
 						if (DateTime.UtcNow >= nextIterationTime)
 						{
 							prices = await GetCryptoPrices();
+							if (prices.Count == 0)
+							{
+								nextIterationTime = DateTime.UtcNow.AddSeconds(Parameters.CustomIntervalSeconds);
+								continue;								
+							}
+
 							StoreIndicatorsInDatabase(prices);
 							AnalyzeIndicators(prices, Parameters.CustomPeriods, Parameters.CustomIntervalSeconds * Parameters.CustomPeriods, false);
 
@@ -371,6 +382,8 @@ namespace Trader
 			AnsiConsole.MarkupLine("Press [bold green]'A'[/] to show analysis strategy");
 			AnsiConsole.MarkupLine("Press [bold green]'B'[/] to buy a coin.");
 			AnsiConsole.MarkupLine("Press [bold green]'S'[/] to sell a coin.");
+			AnsiConsole.MarkupLine("Press [bold green]'K'[/] to backtest strategy.");
+			AnsiConsole.MarkupLine("");
 			AnsiConsole.MarkupLine("Press [bold green]'Q'[/] to quit the program.");
 			AnsiConsole.MarkupLine("\n[bold yellow]============[/]");
 		}
@@ -404,54 +417,122 @@ namespace Trader
 			decimal initialBalance = Parameters.startingBalance;
 			decimal balance = initialBalance;
 			decimal portfolioValue = 0;
-			decimal totalInvestment = 0;
 			decimal totalProfitOrLoss = 0;
 
 			Dictionary<string, decimal> portfolio = new Dictionary<string, decimal>();
-			object lockObject = new object();
+			Dictionary<string, decimal> initialInvestments = new Dictionary<string, decimal>();
+			Dictionary<string, decimal> totalQuantityPerCoin = new Dictionary<string, decimal>();
+			Dictionary<string, decimal> totalCostPerCoin = new Dictionary<string, decimal>();
 
-			historicalData = historicalData.TakeLast(30).ToList();
+			var groupedData = historicalData.GroupBy(h => h.Name).ToDictionary(g => g.Key, g => g.OrderBy(h => h.Timestamp).ToList());
 
-			Parallel.ForEach(historicalData, data =>
+			foreach (var coinData in groupedData)
 			{
-				var prices = new Dictionary<string, decimal> { { data.Name, data.Price } };
-				var recentHistory = historicalData.Where(h => h.Name == data.Name && h.Timestamp <= data.Timestamp)
-												  .Select(h => h.Price).ToList();
+				string coinName = coinData.Key;
+				List<HistoricalData> coinHistory = coinData.Value;
 
-				if (recentHistory.Count < Parameters.CustomPeriods)
-					return;
-
-				decimal rsi = CalculateRSI(recentHistory, recentHistory.Count);
-				decimal sma = CalculateSMA(recentHistory, recentHistory.Count);
-				decimal ema = CalculateEMASingle(recentHistory, recentHistory.Count);
-				var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = CalculateMACD(recentHistory);
-
-				lock (lockObject)
+				for (int i = Parameters.CustomPeriods; i < coinHistory.Count; i++)
 				{
+					var recentHistory = coinHistory.Skip(i - Parameters.CustomPeriods).Take(Parameters.CustomPeriods).Select(h => h.Price).ToList();
+					var data = coinHistory[i];
+
+					decimal rsi = CalculateRSI(recentHistory, recentHistory.Count);
+					decimal sma = CalculateSMA(recentHistory, recentHistory.Count);
+					decimal ema = CalculateEMASingle(recentHistory, recentHistory.Count);
+					var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = CalculateMACD(recentHistory);
+					decimal priceChangeWindow = CalculatePriceChange(recentHistory);
+
+					// Calculate Bollinger Bands
+					var (middleBand, upperBand, lowerBand) = CalculateBollingerBands(recentHistory, Parameters.CustomPeriods);
+
+					// Calculate ATR (assuming high, low, and close prices are available)
+					var highPrices = recentHistory; // Replace with actual high prices
+					var lowPrices = recentHistory; // Replace with actual low prices
+					var closePrices = recentHistory; // Replace with actual close prices
+					decimal atr = CalculateATR(highPrices, lowPrices, closePrices, Parameters.CustomPeriods);
+
+					// Calculate volatility
+					decimal volatility = CalculateVolatility(recentHistory, Parameters.CustomPeriods);
+					var (adjustedStopLoss, adjustedProfitTaking) = AdjustThresholdsBasedOnVolatility(volatility);
+
 					// Trading signals
-					if (rsi < 30 && data.Price < sma && data.Price < ema && macd < 0)
+					if (rsi < 30 && data.Price < sma && data.Price < ema && macd < 0 && data.Price < lowerBand && atr > 0)
 					{
 						// Buy signal
 						decimal quantity = balance / data.Price;
-						balance -= quantity * data.Price;
-						if (!portfolio.ContainsKey(data.Name))
-							portfolio[data.Name] = 0;
-						portfolio[data.Name] += quantity;
-						totalInvestment += quantity * data.Price;
+						decimal cost = quantity * data.Price;
+						decimal fee = cost * Parameters.transactionFeeRate;
+						decimal totalCost = cost + fee;
+
+						if (balance >= totalCost)
+						{
+							balance -= totalCost;
+
+							// Update portfolio
+							if (portfolio.ContainsKey(coinName))
+								portfolio[coinName] += quantity;
+							else
+								portfolio[coinName] = quantity;
+
+							// Update initial investments
+							if (initialInvestments.ContainsKey(coinName))
+								initialInvestments[coinName] += cost;
+							else
+								initialInvestments[coinName] = cost;
+
+							// Update total quantity and cost for cost basis calculation
+							if (totalQuantityPerCoin.ContainsKey(coinName))
+							{
+								totalQuantityPerCoin[coinName] += quantity;
+								totalCostPerCoin[coinName] += cost;
+							}
+							else
+							{
+								totalQuantityPerCoin[coinName] = quantity;
+								totalCostPerCoin[coinName] = cost;
+							}
+						}
 					}
-					else if (rsi > 70 && portfolio.ContainsKey(data.Name) && portfolio[data.Name] > 0 && data.Price > sma && data.Price > ema && macd > 0)
+					else if (rsi > 70 && portfolio.ContainsKey(coinName) && portfolio[coinName] > 0 && data.Price > sma && data.Price > ema && macd > 0 && data.Price > upperBand && atr > 0)
 					{
 						// Sell signal
-						decimal quantity = portfolio[data.Name];
-						balance += quantity * data.Price;
-						portfolio[data.Name] = 0;
-						totalProfitOrLoss += (quantity * data.Price) - totalInvestment;
+						decimal quantityToSell = portfolio[coinName];
+						decimal amountToSell = quantityToSell * data.Price;
+						decimal fee = amountToSell * Parameters.transactionFeeRate;
+						decimal netAmountToSell = amountToSell - fee;
+
+						// Calculate average cost basis
+						decimal averageCostBasis = totalCostPerCoin[coinName] / totalQuantityPerCoin[coinName];
+						decimal costOfSoldCoins = averageCostBasis * quantityToSell;
+
+						// Calculate gain or loss
+						decimal gainOrLoss = netAmountToSell - costOfSoldCoins;
+
+						// Update balance and portfolio
+						balance += netAmountToSell;
+						portfolio[coinName] = 0;
+
+						// Update total quantity and cost
+						totalQuantityPerCoin[coinName] -= quantityToSell;
+						totalCostPerCoin[coinName] -= costOfSoldCoins;
+
+						// Adjust initial investments
+						if (initialInvestments.ContainsKey(coinName))
+						{
+							initialInvestments[coinName] -= costOfSoldCoins;
+							if (initialInvestments[coinName] <= 0)
+							{
+								initialInvestments.Remove(coinName);
+							}
+						}
+
+						totalProfitOrLoss += gainOrLoss;
 					}
 
 					// Update portfolio value
 					portfolioValue = portfolio.Sum(p => p.Value * data.Price);
 				}
-			});
+			}
 
 			decimal finalBalance = balance + portfolioValue;
 			decimal totalReturn = (finalBalance - initialBalance) / initialBalance * 100;
@@ -1249,7 +1330,7 @@ namespace Trader
 				DateTime earliestTimestamp = recentHistoryData.First().Timestamp;
 				TimeSpan timeframe = DateTime.UtcNow - earliestTimestamp;
 				int bufferSeconds = Parameters.CustomIntervalSeconds; // Buffer for capture delays
-				if (timeframe.TotalSeconds < (analysisWindowSeconds - bufferSeconds) || timeframe.TotalSeconds > (analysisWindowSeconds + bufferSeconds))
+				if (timeframe.TotalSeconds < (analysisWindowSeconds - bufferSeconds * 2) || timeframe.TotalSeconds > (analysisWindowSeconds + bufferSeconds * 2))
 				{
 					table.AddRow("Analysis Status", $"[bold red]Not valid timeframe for {coin.Key} analysis. Required: {analysisWindowSeconds} seconds, Available: {timeframe.TotalSeconds} seconds (including buffer of {bufferSeconds} seconds).[/]");
 					AnsiConsole.Write(table);
