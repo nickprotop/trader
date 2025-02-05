@@ -601,7 +601,7 @@ namespace Trader
 
 				// Display total fees
 				decimal totalFees = CalculateTotalFees();
-				AnsiConsole.MarkupLine($"\n[bold yellow]Total Fees Incurred: [bold cyan]{totalFees:C}[/]");
+				AnsiConsole.MarkupLine($"\n[bold yellow]Total Fees Incurred: [/][bold cyan]{totalFees:C}[/]");
 
 			}
 			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Database statistics ===[/]");
