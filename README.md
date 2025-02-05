@@ -1,41 +1,70 @@
-# trader
+# Crypto Trading Bot
 
-The code in Program.cs is a cryptocurrency trading simulation program that fetches cryptocurrency prices, stores them in a SQLite database, and performs analysis to simulate buying and selling based on certain indicators. Here's a breakdown of how it works:
-Initialization
-1.	Constants and Variables:
-•	API_URL: URL to fetch cryptocurrency prices.
-•	dbPath: Path to the SQLite database file.
-•	customIntervalSeconds, customPeriods: Parameters for the analysis interval and periods.
-•	stopLossThreshold, profitTakingThreshold: Thresholds for stop-loss and profit-taking strategies.
-•	priceHistory, balance, portfolio, initialInvestments: Data structures to store price history, balance, portfolio holdings, and initial investments.
-2.	IsConsoleAvailable: Checks if the console is available to avoid exceptions in environments without a console.
-Main Execution Loop
-3.	Main Method:
-•	Initializes the database and optionally clears previous transactions.
-•	Enters an infinite loop to fetch prices, store indicators, analyze them, and simulate trades.
-•	Handles console input to reset the database if the 'C' key is pressed.
-Database Operations
-4.	InitializeDatabase: Creates the database and tables if they don't exist, loads historical prices, balance, portfolio, and initial investments from the database.
-5.	ResetDatabase: Deletes the database file and reinitializes it, resetting the balance and clearing the portfolio and initial investments.
-6.	StoreIndicatorsInDatabase: Stores the fetched prices and calculated indicators (SMA, EMA, RSI, MACD) in the database.
-Fetching and Analyzing Prices
-7.	GetCryptoPrices: Fetches current cryptocurrency prices from the API and updates the price history.
-8.	AnalyzeIndicators: Analyzes the fetched prices using various indicators and simulates buy/sell actions based on the analysis.
-Trading Simulation
-9.	SimulateBuy: Simulates buying a cryptocurrency, updates the balance and portfolio, and records the transaction in the database.
-10.	SimulateSell: Simulates selling a cryptocurrency, updates the balance and portfolio, and records the transaction in the database.
-11.	RecordTransaction: Records a buy or sell transaction in the database.
-Indicator Calculations
-12.	CalculateSMA: Calculates the Simple Moving Average (SMA) for a given period.
-13.	CalculateEMA: Calculates the Exponential Moving Average (EMA) for a given period.
-14.	CalculateRSI: Calculates the Relative Strength Index (RSI) for a given period.
-15.	CalculateMACD: Calculates the Moving Average Convergence Divergence (MACD) indicator.
-Utility Methods
-16.	ShowDatabaseStats: Displays statistics from the database.
-17.	ShowBalance: Displays the current balance and portfolio worth.
-18.	PrintProgramParameters: Prints the program parameters.
-19.	GetRecentHistorySeconds: Retrieves recent price history for a given time window.
-20.	GetFirstTimestampSeconds: Retrieves the first timestamp within a given time window.
-21.	CalculatePriceChange: Calculates the percentage price change over a given history.
-Summary
-The program continuously fetches cryptocurrency prices, stores them in a database, and performs analysis to simulate trading actions based on predefined strategies. It uses various technical indicators to make buy/sell decisions and maintains a record of transactions and portfolio performance.
+Welcome to the Crypto Trading Bot! This bot is designed to automate cryptocurrency trading using various technical indicators and strategies.
+
+## Features
+
+### 1. Automated Trading
+- **Buy and Sell Operations**: Automatically buys and sells cryptocurrencies based on predefined strategies and indicators.
+- **Stop-Loss and Profit-Taking**: Implements stop-loss and profit-taking thresholds to manage risk and secure profits.
+
+### 2. Technical Indicators
+- **Simple Moving Average (SMA)**: Calculates the SMA for a given period.
+- **Exponential Moving Average (EMA)**: Calculates the EMA for a given period.
+- **Relative Strength Index (RSI)**: Calculates the RSI to identify overbought and oversold conditions.
+- **Moving Average Convergence Divergence (MACD)**: Calculates the MACD to identify trend changes.
+- **Bollinger Bands**: Calculates Bollinger Bands to identify volatility and potential price reversals.
+- **Average True Range (ATR)**: Calculates the ATR to measure market volatility.
+
+### 3. Market Analysis
+- **Real-Time Price Fetching**: Fetches real-time cryptocurrency prices from the CoinGecko API.
+- **Market Sentiment Analysis**: Analyzes market sentiment based on RSI and other indicators.
+- **Volatility Adjustment**: Adjusts stop-loss and profit-taking thresholds based on market volatility.
+
+### 4. Portfolio Management
+- **Balance and Portfolio Report**: Displays the current balance, portfolio worth, and detailed portfolio holdings.
+- **Transaction History**: Shows the history of all buy and sell transactions with detailed information.
+- **Database Statistics**: Provides statistics on the stored price data and transaction history.
+
+### 5. User Interaction
+- **Console Menu**: Interactive console menu for various operations such as viewing balance, transaction history, and database statistics.
+- **Verbose Mode**: Option to view detailed balance and portfolio information.
+
+### 6. Backtesting
+- **Strategy Backtesting**: Allows backtesting of trading strategies using historical data to evaluate performance.
+
+## Usage
+
+### Running the Bot
+To run the bot, execute the `Program.cs` file. The bot will start fetching real-time prices and perform automated trading based on the predefined strategies.
+
+### Console Commands
+- **C**: Clear the database and start over.
+- **T**: View transaction history.
+- **V**: View verbose balance and portfolio.
+- **D**: Show database statistics.
+- **P**: Show program parameters.
+- **A**: Show analysis strategy.
+- **B**: Buy a coin.
+- **S**: Sell a coin.
+- **Q**: Quit the program.
+
+### Configuration
+The bot's parameters can be configured in the `Parameters` class:
+- `CustomIntervalSeconds`: Interval time in seconds for fetching prices.
+- `CustomPeriods`: Number of periods for analysis.
+- `API_URL`: URL for fetching cryptocurrency prices.
+- `dbPath`: Path to the SQLite database.
+- `stopLossThreshold`: Stop-loss threshold percentage.
+- `profitTakingThreshold`: Profit-taking threshold percentage.
+- `maxInvestmentPerCoin`: Maximum investment amount per coin.
+- `startingBalance`: Starting balance.
+- `transactionFeeRate`: Transaction fee rate.
+
+## Dependencies
+- .NET 9
+- Spectre.Console
+- System.Data.SQLite
+
+## License
+This project is licensed under the MIT License.

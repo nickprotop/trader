@@ -114,7 +114,7 @@ namespace Trader
 						if (key.Key == ConsoleKey.A)
 						{
 							//BacktestStrategy(LoadHistoricalData());
-							AnalyzeIndicators(RuntimeContext.currentPrices, Parameters.CustomPeriods, Parameters.CustomIntervalSeconds * Parameters.CustomPeriods, false);
+							AnalyzeIndicators(RuntimeContext.currentPrices, Parameters.CustomPeriods, Parameters.CustomIntervalSeconds * Parameters.CustomPeriods, true);
 							PrintMenu();
 						}
 
@@ -1209,7 +1209,7 @@ namespace Trader
 		{
 			DateTime startAnalysisTimeStamp = DateTime.Now.ToUniversalTime();
 
-			if (analysisOnly) RuntimeContext.currentPeriodIndex++;
+			if (!analysisOnly) RuntimeContext.currentPeriodIndex++;
 
 			AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Counter: {RuntimeContext.currentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
 
