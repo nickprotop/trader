@@ -107,23 +107,18 @@ namespace Trader
 					}
 				}
 
-				AnsiConsole.MarkupLine($"[bold cyan]Sold {quantityToSell} of {coinName} at {price} each. Fee: {fee:C}. New balance: {RuntimeContext.balance:C}[/]");
-				AnsiConsole.MarkupLine($"Transaction Gain/Loss: {(gainOrLoss > 0 ? "[bold green]" : "[bold red]")}{gainOrLoss:C}[/]");
-
 				// Record the transaction in the database with gain or loss
 				_recordTransactionAction?.Invoke("SELL", coinName, quantityToSell, price, fee, gainOrLoss);
 
-				return new string[] { $"[bold cyan]Sold {quantityToSell} of {coinName} at {price} each. Fee: {fee:C}. New balance: {RuntimeContext.balance:C}[/]" };
+				return new string[] { 
+					$"[bold cyan]Sold {quantityToSell} of {coinName} at {price} each. Fee: {fee:C}. New balance: {RuntimeContext.balance:C}[/]",
+					$"Transaction Gain/Loss: {(gainOrLoss > 0 ? "[bold green]" : "[bold red]")}{gainOrLoss:C}[/]"
+				};
 			}
 			else
 			{
 				return new string[] { $"[bold red]No holdings to sell for {coinName}.[/]" };
 			}
 		}
-
-
 	}
-
-
-
 }

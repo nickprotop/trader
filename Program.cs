@@ -9,6 +9,7 @@ using System.Text.Json;
 using Spectre.Console;
 using System.Reflection.Metadata;
 using System.Diagnostics;
+using System.Data.Entity.ModelConfiguration.Configuration;
 
 namespace Trader
 {
@@ -23,6 +24,9 @@ namespace Trader
 		public const decimal maxInvestmentPerCoin = 3000m; // Example maximum investment amount per coin
 		public const decimal startingBalance = 10000m; // Starting balance
 		public const decimal transactionFeeRate = 0.01m; // 1% transaction fee
+		public const decimal trailingStopLossPercentage = 0.05m;
+		public const decimal dollarCostAveragingAmount = 100m;
+		public const int dollarCostAveragingSecondsInterval = 60 * 60 * 3;
 	}
 
 	public static class RuntimeContext
@@ -41,7 +45,7 @@ namespace Trader
 	{
 		private static readonly HttpClient client = new HttpClient();
 		private static readonly bool isConsoleAvailable = IsConsoleAvailable();
-		private static ITradeOperations tradeOperations = new SimulationTradeOperations(RecordTransaction);
+		public static ITradeOperations tradeOperations = new SimulationTradeOperations(RecordTransaction);
 
 		private static async Task Main(string[] args)
 		{
@@ -405,8 +409,11 @@ namespace Trader
 			table.AddRow("[bold cyan]Starting Balance[/]", Parameters.startingBalance.ToString("C"));
 			table.AddRow("[bold cyan]Max Investment Per Coin[/]", Parameters.maxInvestmentPerCoin.ToString("C"));
 			table.AddRow("[bold cyan]Transaction Fee Rate[/]", Parameters.transactionFeeRate.ToString("P"));
+			table.AddRow("[bold cyan]Trailing stop loss percentage[/]", Parameters.trailingStopLossPercentage.ToString("P"));
+			table.AddRow("[bold cyan]Dollar cost averaging amount[/]", Parameters.dollarCostAveragingAmount.ToString("C"));
+			table.AddRow("[bold cyan]Dollar cost averaging time interval (seconds)[/]", Parameters.dollarCostAveragingSecondsInterval.ToString());
 
-			AnsiConsole.Write(table);
+		AnsiConsole.Write(table);
 			AnsiConsole.MarkupLine("\n[bold yellow]==========================[/]");
 		}
 
@@ -706,22 +713,30 @@ namespace Trader
 			{
 				conn.Open();
 				string createTableQuery = @"
-    CREATE TABLE IF NOT EXISTS Prices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        price DECIMAL(18,8) NOT NULL,
-        timestamp DATETIME DEFAULT (datetime('now', 'utc'))
-    );
-    CREATE TABLE IF NOT EXISTS Transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL,
-        name TEXT NOT NULL,
-        quantity DECIMAL(18,8) NOT NULL,
-        price DECIMAL(18,8) NOT NULL,
-        fee DECIMAL(18,8) NOT NULL DEFAULT 0.0,
-        gain_loss DECIMAL(18,8),
-        timestamp DATETIME DEFAULT (datetime('now', 'utc'))
-    );";
+            CREATE TABLE IF NOT EXISTS Prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                price DECIMAL(18,8) NOT NULL,
+                timestamp DATETIME DEFAULT (datetime('now', 'utc'))
+            );
+            CREATE TABLE IF NOT EXISTS Transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                quantity DECIMAL(18,8) NOT NULL,
+                price DECIMAL(18,8) NOT NULL,
+                fee DECIMAL(18,8) NOT NULL DEFAULT 0.0,
+                gain_loss DECIMAL(18,8),
+                timestamp DATETIME DEFAULT (datetime('now', 'utc'))
+            );
+            CREATE TABLE IF NOT EXISTS DCAConfig (
+                coin TEXT PRIMARY KEY,
+                lastPurchaseTime DATETIME
+            );
+            CREATE TABLE IF NOT EXISTS TrailingStopLossConfig (
+                coin TEXT PRIMARY KEY,
+                stopLoss DECIMAL(18,8)
+            );";
 				using (var cmd = new SQLiteCommand(createTableQuery, conn))
 				{
 					cmd.ExecuteNonQuery();
@@ -852,6 +867,84 @@ namespace Trader
 					}
 				}
 			}
+		}
+
+		public static void SaveDCAConfig(string coin, DateTime lastPurchaseTime)
+		{
+			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = @"
+            INSERT INTO DCAConfig (coin, lastPurchaseTime)
+            VALUES (@coin, @lastPurchaseTime)
+            ON CONFLICT(coin) DO UPDATE SET lastPurchaseTime = @lastPurchaseTime;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					cmd.Parameters.AddWithValue("@coin", coin);
+					cmd.Parameters.AddWithValue("@lastPurchaseTime", lastPurchaseTime);
+					cmd.ExecuteNonQuery();
+				}
+			}
+		}
+
+		public static DateTime? GetLastPurchaseTime(string coin)
+		{
+			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = "SELECT lastPurchaseTime FROM DCAConfig WHERE coin = @coin;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					cmd.Parameters.AddWithValue("@coin", coin);
+					using (var reader = cmd.ExecuteReader())
+					{
+						if (reader.Read())
+						{
+							return reader.GetDateTime(0);
+						}
+					}
+				}
+			}
+			return null;
+		}
+
+		public static void SaveTrailingStopLoss(string coin, decimal stopLoss)
+		{
+			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = @"
+            INSERT INTO TrailingStopLossConfig (coin, stopLoss)
+            VALUES (@coin, @stopLoss)
+            ON CONFLICT(coin) DO UPDATE SET stopLoss = @stopLoss;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					cmd.Parameters.AddWithValue("@coin", coin);
+					cmd.Parameters.AddWithValue("@stopLoss", stopLoss);
+					cmd.ExecuteNonQuery();
+				}
+			}
+		}
+
+		public static decimal? GetTrailingStopLoss(string coin)
+		{
+			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = "SELECT stopLoss FROM TrailingStopLossConfig WHERE coin = @coin;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					cmd.Parameters.AddWithValue("@coin", coin);
+					using (var reader = cmd.ExecuteReader())
+					{
+						if (reader.Read())
+						{
+							return reader.GetDecimal(0);
+						}
+					}
+				}
+			}
+			return null;
 		}
 
 
@@ -1392,7 +1485,7 @@ namespace Trader
 				operationsTable.AddColumn("Operation");
 				operationsTable.AddColumn("Details");
 
-				if (!analysisOnly)
+				if (!analysisOnly && operationsAllowed)
 				{
 					// Stop-loss and profit-taking strategy
 					if (RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0)
@@ -1423,6 +1516,28 @@ namespace Trader
 							operationPerfomed = true;
 						}
 					}
+
+					// Trailing Stop-Loss
+					TrailingStopLoss.UpdateTrailingStopLoss(coin.Key, coin.Value, Parameters.trailingStopLossPercentage);
+					decimal trailingStopLoss = TrailingStopLoss.GetTrailingStopLoss(coin.Key);
+					if (coin.Value <= trailingStopLoss)
+					{
+						operationsTable.AddRow("TRAILING STOP-LOSS", $"[bold red]Selling {coin.Key.ToUpper()} due to trailing stop-loss.[/]");
+						var sellResult = tradeOperations.Sell(coin.Key, coin.Value);
+						foreach (var result in sellResult)
+						{
+							operationsTable.AddRow("SELL Result", result);
+						}
+						operationPerfomed = true;
+					}
+
+					// Dollar-Cost Averaging (DCA)
+					string[] dollarCostAveraging = DollarCostAveraging.ExecuteDCA(coin.Key, Parameters.dollarCostAveragingAmount, coin.Value, TimeSpan.FromSeconds(Parameters.dollarCostAveragingSecondsInterval));
+					foreach (var result in dollarCostAveraging)
+					{
+						operationsTable.AddRow("DollarCostAveraging", result);
+						operationPerfomed = true;
+					}					
 
 					// Trading signals with confidence levels
 					if (rsi < 30 && coin.Value < sma && coin.Value < ema && macd < 0 && coin.Value < lowerBand && atr > 0)

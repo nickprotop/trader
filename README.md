@@ -7,6 +7,8 @@ Welcome to the Crypto Trading Bot! This bot is designed to automate cryptocurren
 ### 1. Automated Trading
 - **Buy and Sell Operations**: Automatically buys and sells cryptocurrencies based on predefined strategies and indicators.
 - **Stop-Loss and Profit-Taking**: Implements stop-loss and profit-taking thresholds to manage risk and secure profits.
+- **Trailing Stop-Loss**: Dynamically adjusts the stop-loss level as the price of a coin increases to lock in profits while protecting against significant losses.
+- **Dollar-Cost Averaging (DCA)**: Automatically buys a fixed amount of a coin at regular intervals to reduce the impact of volatility.
 
 ### 2. Technical Indicators
 - **Simple Moving Average (SMA)**: Calculates the SMA for a given period.
@@ -60,6 +62,9 @@ The bot's parameters can be configured in the `Parameters` class:
 - `maxInvestmentPerCoin`: Maximum investment amount per coin.
 - `startingBalance`: Starting balance.
 - `transactionFeeRate`: Transaction fee rate.
+- `trailingStopLossPercentage`: Trailing stop-loss percentage.
+- `dollarCostAveragingAmount`: Amount to invest in each DCA purchase.
+- `dollarCostAveragingSecondsInterval`: Time interval in seconds between DCA purchases.
 
 ## Dependencies
 - .NET 9
@@ -67,4 +72,4 @@ The bot's parameters can be configured in the `Parameters` class:
 - System.Data.SQLite
 
 ## License
-This project is licensed under the MIT License.
+This project is licensed under the GPLv3.
