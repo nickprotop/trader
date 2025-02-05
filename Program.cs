@@ -38,6 +38,7 @@ namespace Trader
 		public static Dictionary<string, decimal> totalQuantityPerCoin = new Dictionary<string, decimal>();
 		public static Dictionary<string, decimal> totalCostPerCoin = new Dictionary<string, decimal>();
 		public static Dictionary<string, decimal> currentPrices = new Dictionary<string, decimal>();
+		public static bool CheckForValidTimeInterval = false;
 		public static int currentPeriodIndex = 0;
 	}
 
@@ -63,6 +64,19 @@ namespace Trader
 			}
 
 			InitializeDatabase(clearPreviousTransactions);
+
+			PrintProgramParameters();
+
+			// Load the model if it exists
+			if (File.Exists("model.zip"))
+			{
+				MachineLearningModel.LoadModel("model.zip");
+				AnsiConsole.MarkupLine("[bold green]\n=== Model loaded successfully! ===[/]");
+			}
+			else
+			{
+				TrainAiModel();
+			}
 
 			var cts = new CancellationTokenSource();
 			var token = cts.Token;
@@ -138,6 +152,12 @@ namespace Trader
 							BacktestStrategy(LoadHistoricalData());
 							PrintMenu();
 						}
+
+						if (key.Key == ConsoleKey.R)
+						{
+							TrainAiModel();
+							PrintMenu();
+						}
 					}
 
 					// Check if the background task is running, and if not, restart it
@@ -164,11 +184,38 @@ namespace Trader
 			}
 		}
 
+		private static void TrainAiModel()
+		{
+			AnsiConsole.MarkupLine("[bold cyan]\n=== Retraining AI model... ===\n[/]");
+
+			try
+			{
+				var historicalData = LoadHistoricalData();
+				var trainingData = historicalData.Select(h => new CryptoData
+				{
+					Price = (float)h.Price,
+					SMA = (float)h.SMA,
+					EMA = (float)h.EMA,
+					RSI = (float)h.RSI,
+					MACD = (float)h.MACD,
+					Label = (float)h.Price // Use the price as the label for simplicity
+				}).ToList();
+				MachineLearningModel.TrainModel(trainingData);			
+
+				MachineLearningModel.SaveModel("model.zip"); // Save the model to a file
+				AnsiConsole.MarkupLine("[bold cyan]=== Model retrained and saved successfully! ===[/]");
+
+			} catch(Exception ex)
+			{
+				AnsiConsole.MarkupLine($"[bold red]Error: {ex.Message}\n[/]");
+				AnsiConsole.MarkupLine("[bold cyan]=== End of model retrain ===[/]");
+			}
+		}
+
 		private static Task StartBackgroundTask(CancellationToken token)
 		{
 			return Task.Run(async () =>
 			{
-				bool firstRun = true;
 				DateTime nextIterationTime = DateTime.UtcNow;
 				Dictionary<string, decimal> prices = new Dictionary<string, decimal>();
 
@@ -176,12 +223,6 @@ namespace Trader
 				{
 					while (!token.IsCancellationRequested)
 					{
-						if (firstRun)
-						{
-							PrintProgramParameters();
-							firstRun = false;
-						}
-
 						// Check if it's time for the next iteration
 						if (DateTime.UtcNow >= nextIterationTime)
 						{
@@ -387,6 +428,7 @@ namespace Trader
 			AnsiConsole.MarkupLine("Press [bold green]'B'[/] to buy a coin.");
 			AnsiConsole.MarkupLine("Press [bold green]'S'[/] to sell a coin.");
 			AnsiConsole.MarkupLine("Press [bold green]'K'[/] to backtest strategy.");
+			AnsiConsole.MarkupLine("Press [bold green]'R'[/] to retrain the model.");
 			AnsiConsole.MarkupLine("");
 			AnsiConsole.MarkupLine("Press [bold green]'Q'[/] to quit the program.");
 			AnsiConsole.MarkupLine("\n[bold yellow]============[/]");
@@ -566,19 +608,27 @@ namespace Trader
 			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
 			{
 				conn.Open();
-				string query = "SELECT name, price, timestamp FROM Prices ORDER BY timestamp ASC;";
+				string query = "SELECT name, price, timestamp, ema, macd, rsi, sma FROM Prices ORDER BY timestamp ASC;";
 				using (var cmd = new SQLiteCommand(query, conn))
 				{
 					using (var reader = cmd.ExecuteReader())
 					{
 						while (reader.Read())
 						{
-							historicalData.Add(new HistoricalData
+							var data = new HistoricalData
 							{
 								Name = reader.GetString(0),
 								Price = reader.GetDecimal(1),
 								Timestamp = reader.GetDateTime(2)
-							});
+							};
+
+							// Check for null values and handle them appropriately
+							data.EMA = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3);
+							data.MACD = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4);
+							data.RSI = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5);
+							data.SMA = reader.IsDBNull(6) ? 0 : reader.GetDecimal(6);
+
+							historicalData.Add(data);
 						}
 					}
 				}
@@ -717,6 +767,10 @@ namespace Trader
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 price DECIMAL(18,8) NOT NULL,
+				sma DECIMAL(18,8),
+				ema DECIMAL(18,8),
+				rsi DECIMAL(18,8),
+				macd DECIMAL(18,8),
                 timestamp DATETIME DEFAULT (datetime('now', 'utc'))
             );
             CREATE TABLE IF NOT EXISTS Transactions (
@@ -987,11 +1041,23 @@ namespace Trader
 				conn.Open();
 				foreach (var coin in prices)
 				{
-					string insertQuery = "INSERT INTO Prices (name, price) VALUES (@name, @price);";
+					var recentHistory = RuntimeContext.priceHistory[coin.Key];
+					decimal rsi = IndicatorCalculations.CalculateRSI(recentHistory, recentHistory.Count);
+					decimal sma = IndicatorCalculations.CalculateSMA(recentHistory, recentHistory.Count);
+					decimal ema = IndicatorCalculations.CalculateEMASingle(recentHistory, recentHistory.Count);
+					var (macd, _, _, _) = IndicatorCalculations.CalculateMACD(recentHistory);
+
+					string insertQuery = @"
+					INSERT INTO Prices (name, price, rsi, sma, ema, macd) 
+					VALUES (@name, @price, @rsi, @sma, @ema, @macd);";
 					using (var cmd = new SQLiteCommand(insertQuery, conn))
 					{
 						cmd.Parameters.AddWithValue("@name", coin.Key);
 						cmd.Parameters.AddWithValue("@price", coin.Value);
+						cmd.Parameters.AddWithValue("@rsi", rsi);
+						cmd.Parameters.AddWithValue("@sma", sma);
+						cmd.Parameters.AddWithValue("@ema", ema);
+						cmd.Parameters.AddWithValue("@macd", macd);
 						cmd.ExecuteNonQuery();
 					}
 				}
@@ -1401,12 +1467,16 @@ namespace Trader
 				// Check if the timeframe is suitable for analysis
 				DateTime earliestTimestamp = recentHistoryData.First().Timestamp;
 				TimeSpan timeframe = DateTime.UtcNow - earliestTimestamp;
-				int bufferSeconds = Parameters.CustomIntervalSeconds; // Buffer for capture delays
-				if (timeframe.TotalSeconds < (analysisWindowSeconds - bufferSeconds * 2) || timeframe.TotalSeconds > (analysisWindowSeconds + bufferSeconds * 2))
+
+				if (RuntimeContext.CheckForValidTimeInterval)
 				{
-					table.AddRow("Analysis Status", $"[bold red]Not valid timeframe for {coin.Key} analysis. Required: {analysisWindowSeconds} seconds, Available: {timeframe.TotalSeconds} seconds (including buffer of {bufferSeconds} seconds).[/]");
-					AnsiConsole.Write(table);
-					continue;
+					int bufferSeconds = Parameters.CustomIntervalSeconds * 2; // Buffer for capture delays
+					if (timeframe.TotalSeconds < (analysisWindowSeconds - bufferSeconds) || timeframe.TotalSeconds > (analysisWindowSeconds + bufferSeconds))
+					{
+						table.AddRow("Analysis Status", $"[bold red]Not valid timeframe for {coin.Key} analysis. Required: {analysisWindowSeconds} seconds, Available: {timeframe.TotalSeconds} seconds (including buffer of {bufferSeconds} seconds).[/]");
+						AnsiConsole.Write(table);
+						continue;
+					}
 				}
 
 				decimal rsi = IndicatorCalculations.CalculateRSI(recentHistory, recentHistory.Count);
@@ -1478,6 +1548,18 @@ namespace Trader
 				else if (rsi > 70) sentiment = "OVERBOUGHT";
 
 				table.AddRow("Market Sentiment", $"[bold green]{sentiment}[/]");
+
+				// Use the machine learning model to predict future price
+				var cryptoData = new CryptoData
+				{
+					Price = (float)coin.Value,
+					SMA = (float)sma,
+					EMA = (float)ema,
+					RSI = (float)rsi,
+					MACD = (float)macd
+				};
+				float predictedPrice = MachineLearningModel.Predict(cryptoData);
+				table.AddRow("Predicted Price", $"[bold green]${predictedPrice:N2}[/]");
 
 				AnsiConsole.Write(table);
 
@@ -1650,5 +1732,20 @@ namespace Trader
 		public decimal RSI { get; set; }
 		public decimal MACD { get; set; }
 		public DateTime Timestamp { get; set; }
+	}
+
+	public class CryptoData
+	{
+		public float Price { get; set; }
+		public float SMA { get; set; }
+		public float EMA { get; set; }
+		public float RSI { get; set; }
+		public float MACD { get; set; }
+		public float Label { get; set; } // The label is the target value (e.g., future price)
+
+		public override string ToString()
+		{
+			return $"Price: {Price}, SMA: {SMA}, EMA: {EMA}, RSI: {RSI}, MACD: {MACD}, Label: {Label}";
+		}
 	}
 }

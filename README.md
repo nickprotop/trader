@@ -35,6 +35,10 @@ Welcome to the Crypto Trading Bot! This bot is designed to automate cryptocurren
 ### 6. Backtesting
 - **Strategy Backtesting**: Allows backtesting of trading strategies using historical data to evaluate performance.
 
+### 7. Machine Learning
+- **Model Training**: Trains a machine learning model using historical data to predict future prices.
+- **Model Retraining**: Allows retraining of the machine learning model through the console menu.
+
 ## Usage
 
 ### Running the Bot
@@ -49,6 +53,8 @@ To run the bot, execute the `Program.cs` file. The bot will start fetching real-
 - **A**: Show analysis strategy.
 - **B**: Buy a coin.
 - **S**: Sell a coin.
+- **K**: Backtest strategy.
+- **R**: Retrain the model.
 - **Q**: Quit the program.
 
 ### Configuration
