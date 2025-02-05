@@ -436,23 +436,23 @@ namespace Trader
 					var recentHistory = coinHistory.Skip(i - Parameters.CustomPeriods).Take(Parameters.CustomPeriods).Select(h => h.Price).ToList();
 					var data = coinHistory[i];
 
-					decimal rsi = CalculateRSI(recentHistory, recentHistory.Count);
-					decimal sma = CalculateSMA(recentHistory, recentHistory.Count);
-					decimal ema = CalculateEMASingle(recentHistory, recentHistory.Count);
-					var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = CalculateMACD(recentHistory);
-					decimal priceChangeWindow = CalculatePriceChange(recentHistory);
+					decimal rsi = IndicatorCalculations.CalculateRSI(recentHistory, recentHistory.Count);
+					decimal sma = IndicatorCalculations.CalculateSMA(recentHistory, recentHistory.Count);
+					decimal ema = IndicatorCalculations.CalculateEMASingle(recentHistory, recentHistory.Count);
+					var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = IndicatorCalculations.CalculateMACD(recentHistory);
+					decimal priceChangeWindow = IndicatorCalculations.CalculatePriceChange(recentHistory);
 
 					// Calculate Bollinger Bands
-					var (middleBand, upperBand, lowerBand) = CalculateBollingerBands(recentHistory, Parameters.CustomPeriods);
+					var (middleBand, upperBand, lowerBand) = IndicatorCalculations.CalculateBollingerBands(recentHistory, Parameters.CustomPeriods);
 
 					// Calculate ATR (assuming high, low, and close prices are available)
 					var highPrices = recentHistory; // Replace with actual high prices
 					var lowPrices = recentHistory; // Replace with actual low prices
 					var closePrices = recentHistory; // Replace with actual close prices
-					decimal atr = CalculateATR(highPrices, lowPrices, closePrices, Parameters.CustomPeriods);
+					decimal atr = IndicatorCalculations.CalculateATR(highPrices, lowPrices, closePrices, Parameters.CustomPeriods);
 
 					// Calculate volatility
-					decimal volatility = CalculateVolatility(recentHistory, Parameters.CustomPeriods);
+					decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, Parameters.CustomPeriods);
 					var (adjustedStopLoss, adjustedProfitTaking) = AdjustThresholdsBasedOnVolatility(volatility);
 
 					// Trading signals
@@ -695,14 +695,6 @@ namespace Trader
 			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Database statistics ===[/]");
 		}
 
-
-		private static decimal CalculateSMA(string name, int period)
-		{
-			if (!RuntimeContext.priceHistory.ContainsKey(name) || RuntimeContext.priceHistory[name].Count < period)
-				return 0;
-			return RuntimeContext.priceHistory[name].TakeLast(period).Average();
-		}
-
 		private static void InitializeDatabase(bool clearPreviousTransactions)
 		{
 			if (!File.Exists(Parameters.dbPath))
@@ -718,10 +710,6 @@ namespace Trader
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         price DECIMAL(18,8) NOT NULL,
-        sma DECIMAL(18,8),
-        ema DECIMAL(18,8),
-        rsi DECIMAL(18,8),
-        macd DECIMAL(18,8),
         timestamp DATETIME DEFAULT (datetime('now', 'utc'))
     );
     CREATE TABLE IF NOT EXISTS Transactions (
@@ -906,20 +894,11 @@ namespace Trader
 				conn.Open();
 				foreach (var coin in prices)
 				{
-					decimal sma = CalculateSMA(coin.Key, 20);
-					decimal ema = CalculateEMA(coin.Key, 12);
-					decimal rsi = CalculateRSI(coin.Key, 14);
-					decimal macd = CalculateMACD(coin.Key);
-
-					string insertQuery = "INSERT INTO Prices (name, price, sma, ema, rsi, macd) VALUES (@name, @price, @sma, @ema, @rsi, @macd);";
+					string insertQuery = "INSERT INTO Prices (name, price) VALUES (@name, @price);";
 					using (var cmd = new SQLiteCommand(insertQuery, conn))
 					{
 						cmd.Parameters.AddWithValue("@name", coin.Key);
 						cmd.Parameters.AddWithValue("@price", coin.Value);
-						cmd.Parameters.AddWithValue("@sma", sma);
-						cmd.Parameters.AddWithValue("@ema", ema);
-						cmd.Parameters.AddWithValue("@rsi", rsi);
-						cmd.Parameters.AddWithValue("@macd", macd);
 						cmd.ExecuteNonQuery();
 					}
 				}
@@ -1337,23 +1316,23 @@ namespace Trader
 					continue;
 				}
 
-				decimal rsi = CalculateRSI(recentHistory, recentHistory.Count);
-				decimal sma = CalculateSMA(recentHistory, recentHistory.Count);
-				decimal ema = CalculateEMASingle(recentHistory, recentHistory.Count);
-				var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = CalculateMACD(recentHistory);
-				decimal priceChangeWindow = CalculatePriceChange(recentHistory);
+				decimal rsi = IndicatorCalculations.CalculateRSI(recentHistory, recentHistory.Count);
+				decimal sma = IndicatorCalculations.CalculateSMA(recentHistory, recentHistory.Count);
+				decimal ema = IndicatorCalculations.CalculateEMASingle(recentHistory, recentHistory.Count);
+				var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = IndicatorCalculations.CalculateMACD(recentHistory);
+				decimal priceChangeWindow = IndicatorCalculations.CalculatePriceChange(recentHistory);
 
 				// Calculate Bollinger Bands
-				var (middleBand, upperBand, lowerBand) = CalculateBollingerBands(recentHistory, customPeriods);
+				var (middleBand, upperBand, lowerBand) = IndicatorCalculations.CalculateBollingerBands(recentHistory, customPeriods);
 
 				// Calculate ATR (assuming high, low, and close prices are available)
 				var highPrices = recentHistoryData.Select(x => x.Price).ToList(); // Replace with actual high prices
 				var lowPrices = recentHistoryData.Select(x => x.Price).ToList(); // Replace with actual low prices
 				var closePrices = recentHistoryData.Select(x => x.Price).ToList(); // Replace with actual close prices
-				decimal atr = CalculateATR(highPrices, lowPrices, closePrices, customPeriods);
+				decimal atr = IndicatorCalculations.CalculateATR(highPrices, lowPrices, closePrices, customPeriods);
 
 				// Calculate volatility
-				decimal volatility = CalculateVolatility(recentHistory, customPeriods);
+				decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, customPeriods);
 				var (adjustedStopLoss, adjustedProfitTaking) = AdjustThresholdsBasedOnVolatility(volatility);
 
 				table.AddRow("Current Price", $"[bold green]${coin.Value:N2}[/]");
@@ -1504,55 +1483,6 @@ namespace Trader
 			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Counter: {RuntimeContext.currentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
 		}
 
-		private static (decimal middleBand, decimal upperBand, decimal lowerBand) CalculateBollingerBands(List<decimal> prices, int period, decimal multiplier = 2)
-		{
-			if (prices.Count < period)
-				return (0, 0, 0);
-
-			decimal sma = CalculateSMA(prices, period);
-			decimal stdDev = (decimal)Math.Sqrt((double)prices.TakeLast(period).Select(p => (p - sma) * (p - sma)).Sum() / period);
-
-			decimal upperBand = sma + (multiplier * stdDev);
-			decimal lowerBand = sma - (multiplier * stdDev);
-
-			return (sma, upperBand, lowerBand);
-		}
-
-		private static decimal CalculateATR(List<decimal> highPrices, List<decimal> lowPrices, List<decimal> closePrices, int period)
-		{
-			if (highPrices.Count < period || lowPrices.Count < period || closePrices.Count < period)
-				return 0;
-
-			var trueRanges = new List<decimal>();
-			for (int i = 1; i < highPrices.Count; i++)
-			{
-				decimal highLow = highPrices[i] - lowPrices[i];
-				decimal highClose = Math.Abs(highPrices[i] - closePrices[i - 1]);
-				decimal lowClose = Math.Abs(lowPrices[i] - closePrices[i - 1]);
-				trueRanges.Add(Math.Max(highLow, Math.Max(highClose, lowClose)));
-			}
-
-			return trueRanges.TakeLast(period).Average();
-		}
-
-		private static decimal CalculateVolatility(List<decimal> prices, int period)
-		{
-			if (prices.Count < period)
-				return 0;
-
-			var returns = new List<decimal>();
-			for (int i = 1; i < period; i++)
-			{
-				returns.Add((prices[i] - prices[i - 1]) / prices[i - 1]);
-			}
-
-			decimal averageReturn = returns.Average();
-			decimal sumOfSquaresOfDifferences = returns.Select(val => (val - averageReturn) * (val - averageReturn)).Sum();
-			decimal standardDeviation = (decimal)Math.Sqrt((double)(sumOfSquaresOfDifferences / returns.Count));
-
-			return standardDeviation;
-		}
-
 		private static (decimal stopLossThreshold, decimal profitTakingThreshold) AdjustThresholdsBasedOnVolatility(decimal volatility)
 		{
 			decimal baseStopLoss = Parameters.stopLossThreshold;
@@ -1563,150 +1493,6 @@ namespace Trader
 			decimal adjustedProfitTaking = baseProfitTaking * (1 + volatility);
 
 			return (adjustedStopLoss, adjustedProfitTaking);
-		}
-
-		private static (int bestShortPeriod, int bestLongPeriod, int bestSignalPeriod) FindBestMACDPeriods(List<decimal> prices)
-		{
-			int bestShortPeriod = 12;
-			int bestLongPeriod = 26;
-			int bestSignalPeriod = 9;
-			decimal bestPerformance = decimal.MinValue;
-			object lockObject = new object();
-
-			Parallel.For(5, 16, shortPeriod =>
-			{
-				Parallel.For(20, 31, longPeriod =>
-				{
-					Parallel.For(5, 16, signalPeriod =>
-					{
-						if (shortPeriod >= longPeriod) return;
-
-						decimal performance = EvaluateMACDPerformance(prices, shortPeriod, longPeriod, signalPeriod);
-						lock (lockObject)
-						{
-							if (performance > bestPerformance)
-							{
-								bestPerformance = performance;
-								bestShortPeriod = shortPeriod;
-								bestLongPeriod = longPeriod;
-								bestSignalPeriod = signalPeriod;
-							}
-						}
-					});
-				});
-			});
-
-			return (bestShortPeriod, bestLongPeriod, bestSignalPeriod);
-		}
-
-		private static decimal EvaluateMACDPerformance(List<decimal> prices, int shortPeriod, int longPeriod, int signalPeriod)
-		{
-			List<decimal> macdLine = CalculateMACDLine(prices, shortPeriod, longPeriod);
-			List<decimal> signalLine = CalculateEMA(macdLine, signalPeriod);
-
-			decimal performance = 0;
-			bool inPosition = false;
-			decimal entryPrice = 0;
-
-			for (int i = signalPeriod; i < macdLine.Count; i++)
-			{
-				if (macdLine[i] > signalLine[i] && !inPosition)
-				{
-					inPosition = true;
-					entryPrice = prices[i];
-				}
-				else if (macdLine[i] < signalLine[i] && inPosition)
-				{
-					inPosition = false;
-					performance += prices[i] - entryPrice;
-				}
-			}
-
-			return performance;
-		}
-
-		private static List<decimal> CalculateMACDLine(List<decimal> prices, int shortPeriod, int longPeriod)
-		{
-			List<decimal> macdLine = new List<decimal>();
-			List<decimal> shortEMA = CalculateEMAList(prices, shortPeriod);
-			List<decimal> longEMA = CalculateEMAList(prices, longPeriod);
-
-			for (int i = 0; i < prices.Count; i++)
-			{
-				macdLine.Add(shortEMA[i] - longEMA[i]);
-			}
-
-			return macdLine;
-		}
-
-		private static List<decimal> CalculateEMAList(List<decimal> prices, int periods)
-		{
-			List<decimal> emaList = new List<decimal>();
-			decimal multiplier = 2m / (periods + 1);
-			decimal ema = prices[0]; // Start with the first price as the initial EMA
-
-			for (int i = 0; i < prices.Count; i++)
-			{
-				if (i == 0)
-				{
-					emaList.Add(ema);
-				}
-				else
-				{
-					ema = ((prices[i] - ema) * multiplier) + ema;
-					emaList.Add(ema);
-				}
-			}
-
-			return emaList;
-		}
-
-		private static List<decimal> CalculateEMA(List<decimal> prices, int periods)
-		{
-			List<decimal> emaList = new List<decimal>();
-			decimal multiplier = 2m / (periods + 1);
-			decimal ema = prices[0]; // Start with the first price as the initial EMA
-
-			for (int i = 0; i < prices.Count; i++)
-			{
-				if (i == 0)
-				{
-					emaList.Add(ema);
-				}
-				else
-				{
-					ema = ((prices[i] - ema) * multiplier) + ema;
-					emaList.Add(ema);
-				}
-			}
-
-			return emaList;
-		}
-
-		private static (decimal macdValue, int bestShortPeriod, int bestLongPeriod, int bestSignalPeriod) CalculateMACD(List<decimal> prices)
-		{
-			var (bestShortPeriod, bestLongPeriod, bestSignalPeriod) = FindBestMACDPeriods(prices);
-			List<decimal> macdLine = CalculateMACDLine(prices, bestShortPeriod, bestLongPeriod);
-			List<decimal> signalLine = CalculateEMA(macdLine, bestSignalPeriod);
-
-			decimal macdValue = macdLine.Last() - signalLine.Last();
-			return (macdValue, bestShortPeriod, bestLongPeriod, bestSignalPeriod);
-		}
-
-		private static decimal CalculateEMASingle(List<decimal> prices, int periods)
-		{
-			if (prices == null || prices.Count == 0 || periods <= 0)
-				throw new ArgumentException("Invalid input for EMA calculation.");
-
-			decimal multiplier = 2m / (periods + 1);
-			decimal ema = prices[0]; // Start with the first price as the initial EMA
-
-			for (int i = 1; i < prices.Count; i++)
-			{
-				ema = ((prices[i] - ema) * multiplier) + ema;
-			}
-
-			return ema;
 		}
 
 		private static List<(decimal Price, DateTime Timestamp)> GetRecentHistoryRows(string coin, int rowCount)
@@ -1737,89 +1523,6 @@ namespace Trader
 			}
 			recentHistory.Reverse(); // Reverse the list to get chronological order
 			return recentHistory;
-		}
-
-		private static decimal CalculateSMA(List<decimal> prices, int periods)
-		{
-			if (prices.Count < periods)
-				return prices.Average();
-
-			return prices.TakeLast(periods).Average();
-		}
-
-		private static decimal CalculatePriceChange(List<decimal> history)
-		{
-			if (history.Count < 2) return 0; // Need at least 2 data points to calculate change
-			var oldPrice = history.Last();
-			var currentPrice = history.First();
-			return ((currentPrice - oldPrice) / oldPrice) * 100;
-		}
-
-		private static decimal CalculateRSI(List<decimal> prices, int periods = 14)
-		{
-			if (prices.Count < periods)
-				return 50; // Neutral RSI if not enough data
-
-			var gains = new List<decimal>();
-			var losses = new List<decimal>();
-
-			for (int i = 1; i < prices.Count; i++)
-			{
-				var difference = prices[i] - prices[i - 1];
-				if (difference >= 0)
-				{
-					gains.Add(difference);
-					losses.Add(0);
-				}
-				else
-				{
-					gains.Add(0);
-					losses.Add(-difference);
-				}
-			}
-
-			var avgGain = gains.TakeLast(periods).Average();
-			var avgLoss = losses.TakeLast(periods).Average();
-
-			if (avgLoss == 0)
-				return 100;
-
-			var rs = avgGain / avgLoss;
-			return 100 - (100 / (1 + rs));
-		}
-
-		private static decimal CalculateEMA(string name, int period)
-		{
-			if (!RuntimeContext.priceHistory.ContainsKey(name) || RuntimeContext.priceHistory[name].Count < period)
-				return 0;
-			decimal smoothing = 2m / (period + 1);
-			decimal ema = RuntimeContext.priceHistory[name].Take(period).Average();
-			foreach (var price in RuntimeContext.priceHistory[name].Skip(period))
-			{
-				ema = (price - ema) * smoothing + ema;
-			}
-			return ema;
-		}
-
-		private static decimal CalculateRSI(string name, int period)
-		{
-			if (!RuntimeContext.priceHistory.ContainsKey(name) || RuntimeContext.priceHistory[name].Count < period + 1)
-				return 0;
-			decimal gain = 0, loss = 0;
-			for (int i = 1; i <= period; i++)
-			{
-				decimal change = RuntimeContext.priceHistory[name][^i] - RuntimeContext.priceHistory[name][^(i + 1)];
-				if (change > 0) gain += change;
-				else loss -= change;
-			}
-			if (loss == 0) return 100;
-			decimal rs = gain / loss;
-			return 100 - (100 / (1 + rs));
-		}
-
-		private static decimal CalculateMACD(string name)
-		{
-			return CalculateEMA(name, 12) - CalculateEMA(name, 26);
 		}
 	}
 
