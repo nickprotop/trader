@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using Trader;
+using trader.Models;
 
 namespace trader.Services
 {

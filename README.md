@@ -2,6 +2,9 @@
 
 Welcome to the Crypto Trading Bot! This bot is designed to automate cryptocurrency trading using various technical indicators and strategies.
 
+## Overview
+The Trader application is designed to manage and analyze cryptocurrency trading data. It provides functionalities to track balances, cached prices, portfolio, initial investments, and more.
+
 ## Features
 
 ### 1. Automated Trading
@@ -39,38 +42,24 @@ Welcome to the Crypto Trading Bot! This bot is designed to automate cryptocurren
 - **Model Training**: Trains a machine learning model using historical data to predict future prices.
 - **Model Retraining**: Allows retraining of the machine learning model through the console menu.
 
-## Usage
+## Technologies Used
+- **C# 13.0**: The application is developed using the latest features of C#.
+- **.NET 9**: Target framework for building and running the application.
+- **Microsoft.Extensions.DependencyInjection**: Dependency injection framework for managing service lifetimes.
+- **Microsoft.Extensions.Hosting**: Hosting framework for building long-running applications.
+- **Microsoft.ML**: Machine learning library for integrating ML models.
+- **Spectre.Console**: Library for creating beautiful console applications.
+- **System.Data.SQLite**: SQLite database provider for data storage.
 
-### Running the Bot
-To run the bot, execute the `Program.cs` file. The bot will start fetching real-time prices and perform automated trading based on the predefined strategies.
+## Getting Started
+To get started with the Trader application, follow these steps:
+1. Clone the repository.
+2. Open the solution in Visual Studio 2022.
+3. Build the solution to restore the necessary packages.
+4. Run the application.
 
-### Console Commands
-- **C**: Clear the database and start over.
-- **T**: View transaction history.
-- **V**: View verbose balance and portfolio.
-- **D**: Show database statistics.
-- **P**: Show program parameters.
-- **A**: Show analysis strategy.
-- **B**: Buy a coin.
-- **S**: Sell a coin.
-- **K**: Backtest strategy.
-- **R**: Retrain the model.
-- **Q**: Quit the program.
-
-### Configuration
-The bot's parameters can be configured in the `Parameters` class:
-- `CustomIntervalSeconds`: Interval time in seconds for fetching prices.
-- `CustomPeriods`: Number of periods for analysis.
-- `API_URL`: URL for fetching cryptocurrency prices.
-- `dbPath`: Path to the SQLite database.
-- `stopLossThreshold`: Stop-loss threshold percentage.
-- `profitTakingThreshold`: Profit-taking threshold percentage.
-- `maxInvestmentPerCoin`: Maximum investment amount per coin.
-- `startingBalance`: Starting balance.
-- `transactionFeeRate`: Transaction fee rate.
-- `trailingStopLossPercentage`: Trailing stop-loss percentage.
-- `dollarCostAveragingAmount`: Amount to invest in each DCA purchase.
-- `dollarCostAveragingSecondsInterval`: Time interval in seconds between DCA purchases.
+## Contributing
+Contributions are welcome! Please fork the repository and submit pull requests for any enhancements or bug fixes.
 
 ## Dependencies
 - .NET 9

@@ -1,6 +1,6 @@
 using System;
 using System.Data.SQLite;
-using Trader;
+using trader.Models;
 
 namespace trader.Services
 {
@@ -13,6 +13,135 @@ namespace trader.Services
 		{
 			_settingsService = settingsService;
 			_runtimeContext = runtimeContext;
+		}
+
+		public DateTime? GetLastPurchaseTime(string coin)
+		{
+			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = "SELECT lastPurchaseTime FROM DCAConfig WHERE coin = @coin;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					cmd.Parameters.AddWithValue("@coin", coin);
+					using (var reader = cmd.ExecuteReader())
+					{
+						if (reader.Read())
+						{
+							return reader.GetDateTime(0);
+						}
+					}
+				}
+			}
+			return null;
+		}
+
+		public void SaveTrailingStopLoss(string coin, decimal stopLoss)
+		{
+			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = @"
+            INSERT INTO TrailingStopLossConfig (coin, stopLoss)
+            VALUES (@coin, @stopLoss)
+            ON CONFLICT(coin) DO UPDATE SET stopLoss = @stopLoss;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					cmd.Parameters.AddWithValue("@coin", coin);
+					cmd.Parameters.AddWithValue("@stopLoss", stopLoss);
+					cmd.ExecuteNonQuery();
+				}
+			}
+		}
+
+		public decimal? GetTrailingStopLoss(string coin)
+		{
+			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = "SELECT stopLoss FROM TrailingStopLossConfig WHERE coin = @coin;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					cmd.Parameters.AddWithValue("@coin", coin);
+					using (var reader = cmd.ExecuteReader())
+					{
+						if (reader.Read())
+						{
+							return reader.GetDecimal(0);
+						}
+					}
+				}
+			}
+			return null;
+		}
+
+		public void SaveDCAConfig(string coin, DateTime lastPurchaseTime)
+		{
+			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = @"
+            INSERT INTO DCAConfig (coin, lastPurchaseTime)
+            VALUES (@coin, @lastPurchaseTime)
+            ON CONFLICT(coin) DO UPDATE SET lastPurchaseTime = @lastPurchaseTime;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					cmd.Parameters.AddWithValue("@coin", coin);
+					cmd.Parameters.AddWithValue("@lastPurchaseTime", lastPurchaseTime);
+					cmd.ExecuteNonQuery();
+				}
+			}
+		}
+
+		public List<(decimal Price, DateTime Timestamp)> GetRecentPrices(string coin, int rowCount)
+		{
+			var recentHistory = new List<(decimal Price, DateTime Timestamp)>();
+			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = @"
+            SELECT price, timestamp FROM Prices
+            WHERE name = @name
+            ORDER BY timestamp DESC
+            LIMIT @rowCount;"; // Limit the number of rows returned
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					cmd.Parameters.AddWithValue("@name", coin);
+					cmd.Parameters.AddWithValue("@rowCount", rowCount);
+					using (var reader = cmd.ExecuteReader())
+					{
+						while (reader.Read())
+						{
+							decimal price = reader.GetDecimal(0);
+							DateTime timestamp = reader.GetDateTime(1);
+							recentHistory.Add((price, timestamp));
+						}
+					}
+				}
+			}
+			recentHistory.Reverse(); // Reverse the list to get chronological order
+			return recentHistory;
+		}
+
+		public decimal CalculateTotalFees()
+		{
+			decimal totalFees = 0;
+
+			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = "SELECT SUM(fee) FROM Transactions;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					var result = cmd.ExecuteScalar();
+					if (result != DBNull.Value && result != null)
+					{
+						totalFees = Convert.ToDecimal(result);
+					}
+				}
+			}
+
+			return totalFees;
 		}
 
 		public void RecordTransaction(string type, string coinName, decimal quantity, decimal price, decimal fee, decimal? gainLoss)
@@ -88,7 +217,7 @@ namespace trader.Services
 				_runtimeContext.TotalQuantityPerCoin.Clear();
 				_runtimeContext.TotalCostPerCoin.Clear();
 				_runtimeContext.CurrentPeriodIndex = 0;
-				_runtimeContext.PriceHistory.Clear();
+				_runtimeContext.CachedPrices.Clear();
 
 				string selectQuery = $"SELECT name, price FROM Prices ORDER BY timestamp DESC;";
 				using (var selectCmd = new SQLiteCommand(selectQuery, conn))
@@ -100,11 +229,11 @@ namespace trader.Services
 							string name = reader.GetString(0);
 							decimal price = reader.GetDecimal(1);
 
-							if (!_runtimeContext.PriceHistory.ContainsKey(name))
-								_runtimeContext.PriceHistory[name] = new List<decimal>();
+							if (!_runtimeContext.CachedPrices.ContainsKey(name))
+								_runtimeContext.CachedPrices[name] = new List<decimal>();
 
-							if (_runtimeContext.PriceHistory[name].Count < _settingsService.Settings.CustomPeriods)
-								_runtimeContext.PriceHistory[name].Insert(0, price); // Insert at the beginning to maintain order
+							if (_runtimeContext.CachedPrices[name].Count < _settingsService.Settings.CustomPeriods)
+								_runtimeContext.CachedPrices[name].Insert(0, price); // Insert at the beginning to maintain order
 						}
 					}
 				}

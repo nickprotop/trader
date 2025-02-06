@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Trader;
+using trader.Models;
 
 namespace trader.Services
 {
