@@ -239,10 +239,10 @@ namespace Trader
 			AnsiConsole.MarkupLine("\n[bold yellow]=== Menu ===[/]\n");
 			AnsiConsole.MarkupLine("Press [bold green]'C'[/] to clear the database and start over.");
 			AnsiConsole.MarkupLine("Press [bold green]'T'[/] to view transaction history.");
-			AnsiConsole.MarkupLine("Press [bold green]'V'[/] to view verbose balance and portfolio.");
+			AnsiConsole.MarkupLine("Press [bold green]'V'[/] to view balance and portfolio.");
 			AnsiConsole.MarkupLine("Press [bold green]'D'[/] to show database statistics.");
 			AnsiConsole.MarkupLine("Press [bold green]'P'[/] to show program parameters.");
-			AnsiConsole.MarkupLine("Press [bold green]'A'[/] to show analysis strategy");
+			AnsiConsole.MarkupLine("Press [bold green]'A'[/] to show last analysis strategy");
 			AnsiConsole.MarkupLine("Press [bold green]'B'[/] to buy a coin.");
 			AnsiConsole.MarkupLine("Press [bold green]'S'[/] to sell a coin.");
 			AnsiConsole.MarkupLine("Press [bold green]'K'[/] to backtest strategy.");
