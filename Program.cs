@@ -26,7 +26,7 @@ namespace Trader
 		public const decimal transactionFeeRate = 0.01m; // 1% transaction fee
 		public const decimal trailingStopLossPercentage = 0.05m;
 		public const decimal dollarCostAveragingAmount = 100m;
-		public const int dollarCostAveragingSecondsInterval = 60 * 60 * 3;
+		public const int dollarCostAveragingSecondsInterval = 60 * 60 * 3; // 3 hours
 	}
 
 	public static class RuntimeContext
@@ -218,6 +218,10 @@ namespace Trader
 					EMA = (float)h.EMA,
 					RSI = (float)h.RSI,
 					MACD = (float)h.MACD,
+					BollingerUpper = (float)h.BollingerUpper,
+					BollingerLower = (float)h.BollingerLower,
+					ATR = (float)h.ATR,
+					Volatility = (float)h.Volatility,
 					Label = (float)h.Price // Use the price as the label for simplicity
 				}).ToList();
 				MachineLearningModel.TrainModel(trainingData);
@@ -627,7 +631,10 @@ namespace Trader
 			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
 			{
 				conn.Open();
-				string query = "SELECT name, price, timestamp, ema, macd, rsi, sma FROM Prices ORDER BY timestamp ASC;";
+				string query = @"
+			SELECT name, price, timestamp, ema, macd, rsi, sma, bollingerUpper, bollingerLower, atr, volatility
+			FROM Prices
+			ORDER BY timestamp ASC;";
 				using (var cmd = new SQLiteCommand(query, conn))
 				{
 					using (var reader = cmd.ExecuteReader())
@@ -646,6 +653,10 @@ namespace Trader
 							data.MACD = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4);
 							data.RSI = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5);
 							data.SMA = reader.IsDBNull(6) ? 0 : reader.GetDecimal(6);
+							data.BollingerUpper = reader.IsDBNull(7) ? 0 : reader.GetDecimal(7);
+							data.BollingerLower = reader.IsDBNull(8) ? 0 : reader.GetDecimal(8);
+							data.ATR = reader.IsDBNull(9) ? 0 : reader.GetDecimal(9);
+							data.Volatility = reader.IsDBNull(10) ? 0 : reader.GetDecimal(10);
 
 							historicalData.Add(data);
 						}
@@ -789,6 +800,10 @@ namespace Trader
 					ema DECIMAL(18,8),
 					rsi DECIMAL(18,8),
 					macd DECIMAL(18,8),
+					bollingerUpper DECIMAL(18,8),
+					bollingerLower DECIMAL(18,8),
+					atr DECIMAL(18,8),
+					volatility DECIMAL(18,8),
 					timestamp DATETIME DEFAULT (datetime('now', 'utc'))
 				);
 				CREATE TABLE IF NOT EXISTS Transactions (
@@ -1063,10 +1078,13 @@ namespace Trader
 					decimal sma = IndicatorCalculations.CalculateSMA(recentHistory, recentHistory.Count);
 					decimal ema = IndicatorCalculations.CalculateEMASingle(recentHistory, recentHistory.Count);
 					var (macd, _, _, _) = IndicatorCalculations.CalculateMACD(recentHistory);
+					var (bollingerUpper, bollingerLower, _) = IndicatorCalculations.CalculateBollingerBands(recentHistory, Parameters.CustomPeriods);
+					decimal atr = IndicatorCalculations.CalculateATR(recentHistory, recentHistory, recentHistory, Parameters.CustomPeriods);
+					decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, Parameters.CustomPeriods);
 
 					string insertQuery = @"
-					INSERT INTO Prices (name, price, rsi, sma, ema, macd)
-					VALUES (@name, @price, @rsi, @sma, @ema, @macd);";
+					INSERT INTO Prices (name, price, rsi, sma, ema, macd, bollingerUpper, bollingerLower, atr, volatility)
+					VALUES (@name, @price, @rsi, @sma, @ema, @macd, @bollingerUpper, @bollingerLower, @atr, @volatility);";
 					using (var cmd = new SQLiteCommand(insertQuery, conn))
 					{
 						cmd.Parameters.AddWithValue("@name", coin.Key);
@@ -1075,6 +1093,10 @@ namespace Trader
 						cmd.Parameters.AddWithValue("@sma", sma);
 						cmd.Parameters.AddWithValue("@ema", ema);
 						cmd.Parameters.AddWithValue("@macd", macd);
+						cmd.Parameters.AddWithValue("@bollingerUpper", bollingerUpper);
+						cmd.Parameters.AddWithValue("@bollingerLower", bollingerLower);
+						cmd.Parameters.AddWithValue("@atr", atr);
+						cmd.Parameters.AddWithValue("@volatility", volatility);
 						cmd.ExecuteNonQuery();
 					}
 				}
@@ -1754,6 +1776,10 @@ namespace Trader
 		public decimal RSI { get; set; }
 		public decimal MACD { get; set; }
 		public DateTime Timestamp { get; set; }
+		public decimal BollingerUpper { get; set; }
+		public decimal BollingerLower { get; set; }
+		public decimal ATR { get; set; }
+		public decimal Volatility { get; set; }
 	}
 
 	public class CryptoData
@@ -1763,11 +1789,15 @@ namespace Trader
 		public float EMA { get; set; }
 		public float RSI { get; set; }
 		public float MACD { get; set; }
+		public float BollingerUpper { get; set; }
+		public float BollingerLower { get; set; }
+		public float ATR { get; set; }
+		public float Volatility { get; set; }
 		public float Label { get; set; } // The label is the target value (e.g., future price)
 
 		public override string ToString()
 		{
-			return $"Price: {Price}, SMA: {SMA}, EMA: {EMA}, RSI: {RSI}, MACD: {MACD}, Label: {Label}";
+			return $"Price: {Price}, SMA: {SMA}, EMA: {EMA}, RSI: {RSI}, MACD: {MACD}, BollingerUpper: {BollingerUpper}, BollingerLower: {BollingerLower}, ATR: {ATR}, Volatility: {Volatility}, Label: {Label}";
 		}
 	}
 }
