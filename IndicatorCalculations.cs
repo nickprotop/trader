@@ -54,7 +54,7 @@ namespace Trader
 
 		public static decimal CalculateRSI(List<decimal> prices, int periods = 14)
 		{
-			if (prices.Count < periods)
+			if (prices.Count < periods || periods < 2)
 				return 50; // Neutral RSI if not enough data
 
 			var gains = new List<decimal>();

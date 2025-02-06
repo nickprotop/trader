@@ -38,7 +38,7 @@ namespace Trader
 		public static Dictionary<string, decimal> totalQuantityPerCoin = new Dictionary<string, decimal>();
 		public static Dictionary<string, decimal> totalCostPerCoin = new Dictionary<string, decimal>();
 		public static Dictionary<string, decimal> currentPrices = new Dictionary<string, decimal>();
-		public static bool CheckForValidTimeInterval = false;
+		public static bool CheckForValidTimeInterval = true;
 		public static int currentPeriodIndex = 0;
 	}
 
@@ -63,7 +63,25 @@ namespace Trader
 				ResetDatabase();
 			}
 
-			InitializeDatabase(clearPreviousTransactions);
+			try
+			{
+				InitializeDatabase(clearPreviousTransactions);
+			}
+			catch (Exception ex)
+			{
+				AnsiConsole.MarkupLine($"[bold red]Error while initialize database: {ex.Message}[/]");
+
+				var resetDatabase = AnsiConsole.Confirm("Do you want to reset the database and start over?");
+				if (resetDatabase)
+				{
+					ResetDatabase();
+				}
+				else
+				{
+					AnsiConsole.MarkupLine("[bold red]Exiting the program...[/]");
+					return;
+				}
+			}
 
 			PrintProgramParameters();
 
@@ -189,6 +207,10 @@ namespace Trader
 			try
 			{
 				var historicalData = LoadHistoricalData();
+
+				// Prepare the training data
+				historicalData = historicalData.Where(h => !(h.RSI == 0 && h.EMA == 0 && h.SMA == 0 && h.MACD == 0)).ToList();
+
 				var trainingData = historicalData.Select(h => new CryptoData
 				{
 					Price = (float)h.Price,
@@ -757,8 +779,8 @@ namespace Trader
 
 			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
 			{
-					conn.Open();
-					string createTableQuery = @"
+				conn.Open();
+				string createTableQuery = @"
 				CREATE TABLE IF NOT EXISTS Prices (
 					id INTEGER PRIMARY KEY AUTOINCREMENT,
 					name TEXT NOT NULL,
