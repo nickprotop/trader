@@ -42,9 +42,9 @@ namespace trader.Services
 			{
 				conn.Open();
 				string query = @"
-            INSERT INTO TrailingStopLossConfig (coin, stopLoss)
-            VALUES (@coin, @stopLoss)
-            ON CONFLICT(coin) DO UPDATE SET stopLoss = @stopLoss;";
+				INSERT INTO TrailingStopLossConfig (coin, stopLoss)
+				VALUES (@coin, @stopLoss)
+				ON CONFLICT(coin) DO UPDATE SET stopLoss = @stopLoss;";
 				using (var cmd = new SQLiteCommand(query, conn))
 				{
 					cmd.Parameters.AddWithValue("@coin", coin);
@@ -81,9 +81,9 @@ namespace trader.Services
 			{
 				conn.Open();
 				string query = @"
-            INSERT INTO DCAConfig (coin, lastPurchaseTime)
-            VALUES (@coin, @lastPurchaseTime)
-            ON CONFLICT(coin) DO UPDATE SET lastPurchaseTime = @lastPurchaseTime;";
+				INSERT INTO DCAConfig (coin, lastPurchaseTime)
+				VALUES (@coin, @lastPurchaseTime)
+				ON CONFLICT(coin) DO UPDATE SET lastPurchaseTime = @lastPurchaseTime;";
 				using (var cmd = new SQLiteCommand(query, conn))
 				{
 					cmd.Parameters.AddWithValue("@coin", coin);
@@ -100,10 +100,10 @@ namespace trader.Services
 			{
 				conn.Open();
 				string query = @"
-            SELECT price, timestamp FROM Prices
-            WHERE name = @name
-            ORDER BY timestamp DESC
-            LIMIT @rowCount;"; // Limit the number of rows returned
+				SELECT price, timestamp FROM Prices
+				WHERE name = @name
+				ORDER BY timestamp DESC
+				LIMIT @rowCount;"; // Limit the number of rows returned
 				using (var cmd = new SQLiteCommand(query, conn))
 				{
 					cmd.Parameters.AddWithValue("@name", coin);
@@ -271,10 +271,10 @@ namespace trader.Services
 
 				// Load the portfolio from the Transactions table
 				string portfolioQuery = @"
-    SELECT name, SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS quantity
-    FROM Transactions
-    GROUP BY name
-    HAVING quantity > 0;";
+				SELECT name, SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS quantity
+				FROM Transactions
+				GROUP BY name
+				HAVING quantity > 0;";
 				using (var portfolioCmd = new SQLiteCommand(portfolioQuery, conn))
 				{
 					using (var reader = portfolioCmd.ExecuteReader())
@@ -290,11 +290,11 @@ namespace trader.Services
 
 				// Load the initial investments from the Transactions table
 				string investmentsQuery = @"
-    SELECT name,
-           SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE 0 END) -
-           SUM(CASE WHEN type = 'SELL' THEN quantity * price ELSE 0 END) AS investment
-    FROM Transactions
-    GROUP BY name;";
+				SELECT name,
+					   SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE 0 END) -
+					   SUM(CASE WHEN type = 'SELL' THEN quantity * price ELSE 0 END) AS investment
+				FROM Transactions
+				GROUP BY name;";
 				using (var investmentsCmd = new SQLiteCommand(investmentsQuery, conn))
 				{
 					using (var reader = investmentsCmd.ExecuteReader())
@@ -310,11 +310,11 @@ namespace trader.Services
 
 				// Load total quantity and cost for cost basis calculations
 				string costBasisQuery = @"
-    SELECT name,
-        SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS totalQuantity,
-        SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE -quantity * price END) AS totalCost
-    FROM Transactions
-    GROUP BY name;";
+				SELECT name,
+					SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS totalQuantity,
+					SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE -quantity * price END) AS totalCost
+				FROM Transactions
+				GROUP BY name;";
 				using (var costBasisCmd = new SQLiteCommand(costBasisQuery, conn))
 				{
 					using (var reader = costBasisCmd.ExecuteReader())
@@ -340,9 +340,9 @@ namespace trader.Services
 			{
 				conn.Open();
 				string query = @"
-			SELECT name, price, timestamp, ema, macd, rsi, sma, bollingerUpper, bollingerLower, atr, volatility
-			FROM Prices
-			ORDER BY timestamp ASC;";
+				SELECT name, price, timestamp, ema, macd, rsi, sma, bollingerUpper, bollingerLower, atr, volatility
+				FROM Prices
+				ORDER BY timestamp ASC;";
 				using (var cmd = new SQLiteCommand(query, conn))
 				{
 					using (var reader = cmd.ExecuteReader())
