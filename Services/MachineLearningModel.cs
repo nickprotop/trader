@@ -2,19 +2,19 @@ using Microsoft.ML;
 using Microsoft.ML.Data;
 using Spectre.Console;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Trader;
 
-namespace Trader
+namespace trader.Services
 {
-	public static class MachineLearningModel
+	public class MachineLearningService : IMachineLearningService
 	{
 		private static MLContext mlContext = new MLContext();
 		private static ITransformer? model;
 
-		public static void TrainModel(List<CryptoData> trainingData)
+		public void TrainModel(List<CryptoData> trainingData)
 		{
 			// Validate training data and log non-finite values
 			foreach (var data in trainingData)
@@ -74,7 +74,7 @@ namespace Trader
 			}
 		}
 
-		public static void SaveModel(string modelPath)
+		public void SaveModel(string modelPath)
 		{
 			if (model == null)
 			{
@@ -87,7 +87,7 @@ namespace Trader
 			}
 		}
 
-		public static void LoadModel(string modelPath)
+		public void LoadModel(string modelPath)
 		{
 			using (var fileStream = new FileStream(modelPath, FileMode.Open, FileAccess.Read, FileShare.Read))
 			{
@@ -100,7 +100,7 @@ namespace Trader
 			return !float.IsNaN(value) && !float.IsInfinity(value);
 		}
 
-		public static float Predict(CryptoData input)
+		public float Predict(CryptoData input)
 		{
 			if (model == null)
 			{

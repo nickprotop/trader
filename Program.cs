@@ -1,85 +1,89 @@
-﻿using System;
-using System.Net.Http;
-using System.Threading.Tasks;
-using System.Collections.Generic;
-using System.Data.SQLite;
-using System.IO;
-using System.Linq;
-using System.Text.Json;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Spectre.Console;
-using System.Reflection.Metadata;
-using System.Diagnostics;
-using System.Data.Entity.ModelConfiguration.Configuration;
+using System;
+using System.Data.SQLite;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading.Tasks;
+using trader.Services;
 
 namespace Trader
 {
-	public static class Parameters
-	{
-		public const int CustomIntervalSeconds = 30; // Example interval time in seconds
-		public const int CustomPeriods = 60; // Example number of periods
-		public const string API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,cardano&vs_currencies=usd";
-		public const string dbPath = "crypto_prices.db";
-		public const decimal stopLossThreshold = -0.05m; // 5% loss
-		public const decimal profitTakingThreshold = 0.05m; // 5% gain
-		public const decimal maxInvestmentPerCoin = 3000m; // Example maximum investment amount per coin
-		public const decimal startingBalance = 10000m; // Starting balance
-		public const decimal transactionFeeRate = 0.01m; // 1% transaction fee
-		public const decimal trailingStopLossPercentage = 0.05m;
-		public const decimal dollarCostAveragingAmount = 100m;
-		public const int dollarCostAveragingSecondsInterval = 60 * 60 * 3; // 3 hours
-	}
-
-	public static class RuntimeContext
-	{
-		public static decimal balance = Parameters.startingBalance;
-		public static Dictionary<string, List<decimal>> priceHistory = new Dictionary<string, List<decimal>>();
-		public static Dictionary<string, decimal> portfolio = new Dictionary<string, decimal>();
-		public static Dictionary<string, decimal> initialInvestments = new Dictionary<string, decimal>();
-		public static Dictionary<string, decimal> totalQuantityPerCoin = new Dictionary<string, decimal>();
-		public static Dictionary<string, decimal> totalCostPerCoin = new Dictionary<string, decimal>();
-		public static Dictionary<string, decimal> currentPrices = new Dictionary<string, decimal>();
-		public static bool CheckForValidTimeInterval = true;
-		public static int currentPeriodIndex = 0;
-	}
-
 	public class Program
 	{
 		private static readonly HttpClient client = new HttpClient();
 		private static readonly bool isConsoleAvailable = IsConsoleAvailable();
-		public static ITradeOperations tradeOperations = new SimulationTradeOperations(RecordTransaction);
 
-		private static async Task Main(string[] args)
+		private static ITradeOperations? tradeOperations;
+		private static IMachineLearningService? mlService;
+		private static IDatabaseService? databaseService;
+		private static ISettingsService? settingsService;
+		private static RuntimeContext? runtimeContext;
+
+		private readonly ITradeOperations _tradeOperations;
+		private readonly IMachineLearningService _mlService;
+
+		public Program(ITradeOperations tradeOperations, IMachineLearningService mlService)
+		{
+			_tradeOperations = tradeOperations;
+			_mlService = mlService;
+		}
+
+		private static IHostBuilder CreateHostBuilder(string[] args) =>
+			Host.CreateDefaultBuilder(args)
+				.ConfigureServices((_, services) =>
+					services.AddSingleton<ITradeOperations, SimulationTradeOperations>()
+							.AddSingleton<IMachineLearningService, MachineLearningService>()
+							.AddSingleton<IDatabaseService, DatabaseService>()
+							.AddSingleton<ISettingsService, SettingsService>()
+							.AddScoped<RuntimeContext>()
+							.AddScoped<Trader>());
+
+		public static async Task Main(string[] args)
 		{
 			Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-			bool clearPreviousTransactions = args.Contains("-c");
+			var host = CreateHostBuilder(args).Build();
+
+			tradeOperations = host.Services.GetRequiredService<ITradeOperations>();
+			mlService = host.Services.GetRequiredService<IMachineLearningService>();
+			databaseService = host.Services.GetRequiredService<IDatabaseService>();
+			settingsService = host.Services.GetRequiredService<ISettingsService>();
+			runtimeContext = host.Services.GetRequiredService<RuntimeContext>();
+
+			var trader = host.Services.GetRequiredService<Trader>();			
+
+			bool performResetDatabase = args.Contains("-c");
 
 			AnsiConsole.MarkupLine("[bold yellow]=== Welcome to the Crypto Trading Bot ===[/]");
 
-			// Do not load previous transactions
-			if (clearPreviousTransactions)
+			if (performResetDatabase)
 			{
 				AnsiConsole.MarkupLine("[bold red]\nClearing database...[/]");
 				ResetDatabase();
 			}
-
-			try
+			else
 			{
-				InitializeDatabase(clearPreviousTransactions);
-			}
-			catch (Exception ex)
-			{
-				AnsiConsole.MarkupLine($"[bold red]Error while initialize database: {ex.Message}[/]");
-
-				var resetDatabase = AnsiConsole.Confirm("Do you want to reset the database and start over?");
-				if (resetDatabase)
+				try
 				{
-					ResetDatabase();
+					databaseService.InitializeRuntimeContext();
 				}
-				else
+				catch (Exception ex)
 				{
-					AnsiConsole.MarkupLine("[bold red]Exiting the program...[/]");
-					return;
+					AnsiConsole.MarkupLine($"[bold red]Error while initialize database: {ex.Message}[/]");
+
+					var resetDatabase = AnsiConsole.Confirm("Do you want to reset the database and start over?");
+
+					if (resetDatabase)
+					{
+						ResetDatabase();
+					}
+					else
+					{
+						AnsiConsole.MarkupLine("[bold red]Exiting the program...[/]");
+						return;
+					}
 				}
 			}
 
@@ -88,12 +92,12 @@ namespace Trader
 			// Load the model if it exists
 			if (File.Exists("model.zip"))
 			{
-				MachineLearningModel.LoadModel("model.zip");
+				mlService.LoadModel("model.zip");
 				AnsiConsole.MarkupLine("[bold green]\n=== Model loaded successfully! ===[/]");
 			}
 			else
 			{
-				TrainAiModel();
+				TrainAiModel(mlService);
 			}
 
 			var cts = new CancellationTokenSource();
@@ -124,7 +128,7 @@ namespace Trader
 
 						if (key.Key == ConsoleKey.V)
 						{
-							ShowBalance(RuntimeContext.currentPrices, true, true);
+							ShowBalance(runtimeContext.CurrentPrices, true, true);
 							PrintMenu();
 						}
 
@@ -149,7 +153,7 @@ namespace Trader
 
 						if (key.Key == ConsoleKey.A)
 						{
-							AnalyzeIndicators(RuntimeContext.currentPrices, Parameters.CustomPeriods, Parameters.CustomIntervalSeconds * Parameters.CustomPeriods, true);
+							AnalyzeIndicators(runtimeContext.CurrentPrices, settingsService.Settings.CustomPeriods, settingsService.Settings.CustomIntervalSeconds * settingsService.Settings.CustomPeriods, true);
 							PrintMenu();
 						}
 
@@ -167,13 +171,13 @@ namespace Trader
 
 						if (key.Key == ConsoleKey.K)
 						{
-							BacktestStrategy(LoadHistoricalData());
+							BacktestStrategy(databaseService.LoadHistoricalData());
 							PrintMenu();
 						}
 
 						if (key.Key == ConsoleKey.R)
 						{
-							TrainAiModel();
+							TrainAiModel(mlService);
 							PrintMenu();
 						}
 					}
@@ -200,13 +204,13 @@ namespace Trader
 			}
 		}
 
-		private static void TrainAiModel()
+		private static void TrainAiModel(IMachineLearningService mlService)
 		{
 			AnsiConsole.MarkupLine("[bold cyan]\n=== Retraining AI model... ===\n[/]");
 
 			try
 			{
-				var historicalData = LoadHistoricalData();
+				var historicalData = databaseService.LoadHistoricalData();
 
 				// Prepare the training data
 				historicalData = historicalData.Where(h => !(h.RSI == 0 && h.EMA == 0 && h.SMA == 0 && h.MACD == 0)).ToList();
@@ -224,9 +228,9 @@ namespace Trader
 					Volatility = (float)h.Volatility,
 					Label = (float)h.Price // Use the price as the label for simplicity
 				}).ToList();
-				MachineLearningModel.TrainModel(trainingData);
+				mlService.TrainModel(trainingData);
 
-				MachineLearningModel.SaveModel("model.zip"); // Save the model to a file
+				mlService.SaveModel("model.zip"); // Save the model to a file
 				AnsiConsole.MarkupLine("[bold cyan]=== Model retrained and saved successfully! ===[/]");
 			}
 			catch (Exception ex)
@@ -253,18 +257,18 @@ namespace Trader
 							prices = await GetCryptoPrices();
 							if (prices.Count == 0)
 							{
-								nextIterationTime = DateTime.UtcNow.AddSeconds(Parameters.CustomIntervalSeconds);
+								nextIterationTime = DateTime.UtcNow.AddSeconds(settingsService.Settings.CustomIntervalSeconds);
 								continue;
 							}
 
 							StoreIndicatorsInDatabase(prices);
-							AnalyzeIndicators(prices, Parameters.CustomPeriods, Parameters.CustomIntervalSeconds * Parameters.CustomPeriods, false);
+							AnalyzeIndicators(prices, settingsService.Settings.CustomPeriods, settingsService.Settings.CustomIntervalSeconds * settingsService.Settings.CustomPeriods, false);
 
 							PrintMenu();
 
 							// Update the next iteration time
-							nextIterationTime = DateTime.UtcNow.AddSeconds(Parameters.CustomIntervalSeconds);
-							AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update in {Parameters.CustomIntervalSeconds} seconds... ===[/]");
+							nextIterationTime = DateTime.UtcNow.AddSeconds(settingsService.Settings.CustomIntervalSeconds);
+							AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update in {settingsService.Settings.CustomIntervalSeconds} seconds... ===[/]");
 						}
 						else
 						{
@@ -284,9 +288,24 @@ namespace Trader
 			}, token);
 		}
 
+		public static string[] ExecuteDCA(string coin, decimal amount, decimal currentPrice, TimeSpan interval)
+		{
+			DateTime? lastPurchaseTime = GetLastPurchaseTime(coin);
+			if (!lastPurchaseTime.HasValue || (DateTime.UtcNow - lastPurchaseTime.Value) >= interval)
+			{
+				decimal quantity = amount / currentPrice;
+				var buyResult = tradeOperations.Buy(coin, quantity, currentPrice);
+				SaveDCAConfig(coin, DateTime.UtcNow);
+
+				return buyResult;
+			}
+
+			return new string[] { };
+		}
+
 		private static void SellCoinFromPortfolio()
 		{
-			if (RuntimeContext.portfolio.Count == 0)
+			if (runtimeContext.Portfolio.Count == 0)
 			{
 				AnsiConsole.MarkupLine("[bold red]No coins in the portfolio to sell.[/]");
 				return;
@@ -300,20 +319,20 @@ namespace Trader
 			table.AddColumn("Gain/Loss");
 			table.AddColumn("Gain/Loss Including Fee");
 
-			foreach (var coin in RuntimeContext.portfolio)
+			foreach (var coin in runtimeContext.Portfolio)
 			{
 				if (coin.Value > 0)
 				{
-					decimal currentPrice = RuntimeContext.currentPrices.ContainsKey(coin.Key) ? RuntimeContext.currentPrices[coin.Key] : 0;
+					decimal currentPrice = runtimeContext.CurrentPrices.ContainsKey(coin.Key) ? runtimeContext.CurrentPrices[coin.Key] : 0;
 					decimal value = coin.Value * currentPrice;
 
 					// Calculate gain or loss
-					decimal averageCostBasis = RuntimeContext.totalCostPerCoin[coin.Key] / RuntimeContext.totalQuantityPerCoin[coin.Key];
+					decimal averageCostBasis = runtimeContext.TotalCostPerCoin[coin.Key] / runtimeContext.TotalQuantityPerCoin[coin.Key];
 					decimal costOfHeldCoins = averageCostBasis * coin.Value;
 					decimal gainOrLoss = value - costOfHeldCoins;
 
 					// Calculate gain or loss including fee
-					decimal fee = value * Parameters.transactionFeeRate;
+					decimal fee = value * settingsService.Settings.TransactionFeeRate;
 					decimal gainOrLossIncludingFee = gainOrLoss - fee;
 
 					string gainOrLossStr = gainOrLoss >= 0 ? $"[green]{gainOrLoss:C}[/]" : $"[red]{gainOrLoss:C}[/]";
@@ -336,7 +355,7 @@ namespace Trader
 				new SelectionPrompt<string>()
 					.Title("Select a coin to sell (or [bold red]Cancel[/]):")
 					.PageSize(10)
-					.AddChoices(RuntimeContext.portfolio.Keys.Where(k => RuntimeContext.portfolio[k] > 0).Append("Cancel").ToArray())
+					.AddChoices(runtimeContext.Portfolio.Keys.Where(k => runtimeContext.Portfolio[k] > 0).Append("Cancel").ToArray())
 			);
 
 			if (coinToSell == "Cancel")
@@ -345,14 +364,14 @@ namespace Trader
 				return;
 			}
 
-			if (RuntimeContext.portfolio.ContainsKey(coinToSell) && RuntimeContext.portfolio[coinToSell] > 0)
+			if (runtimeContext.Portfolio.ContainsKey(coinToSell) && runtimeContext.Portfolio[coinToSell] > 0)
 			{
-				decimal currentPrice = RuntimeContext.currentPrices[coinToSell];
-				decimal quantityToSell = RuntimeContext.portfolio[coinToSell];
+				decimal currentPrice = runtimeContext.CurrentPrices[coinToSell];
+				decimal quantityToSell = runtimeContext.Portfolio[coinToSell];
 				decimal totalValue = quantityToSell * currentPrice;
 
 				// Calculate gain or loss
-				decimal averageCostBasis = RuntimeContext.totalCostPerCoin[coinToSell] / RuntimeContext.totalQuantityPerCoin[coinToSell];
+				decimal averageCostBasis = runtimeContext.TotalCostPerCoin[coinToSell] / runtimeContext.TotalQuantityPerCoin[coinToSell];
 				decimal costOfSoldCoins = averageCostBasis * quantityToSell;
 				decimal gainOrLoss = totalValue - costOfSoldCoins;
 
@@ -368,9 +387,27 @@ namespace Trader
 			}
 		}
 
+		public static void UpdateTrailingStopLoss(string coin, decimal currentPrice, decimal trailingPercentage)
+		{
+			decimal? stopLoss = GetTrailingStopLoss(coin);
+			if (!stopLoss.HasValue)
+			{
+				stopLoss = currentPrice * (1 - trailingPercentage);
+				SaveTrailingStopLoss(coin, stopLoss.Value);
+			}
+			else
+			{
+				decimal newStopLoss = currentPrice * (1 - trailingPercentage);
+				if (newStopLoss > stopLoss.Value)
+				{
+					SaveTrailingStopLoss(coin, newStopLoss);
+				}
+			}
+		}
+
 		private static void BuyCoin()
 		{
-			var availableCoins = RuntimeContext.currentPrices.Keys.ToList();
+			var availableCoins = runtimeContext.CurrentPrices.Keys.ToList();
 
 			if (availableCoins.Count == 0)
 			{
@@ -384,7 +421,7 @@ namespace Trader
 
 			foreach (var coin in availableCoins)
 			{
-				decimal currentPrice = RuntimeContext.currentPrices[coin];
+				decimal currentPrice = runtimeContext.CurrentPrices[coin];
 				table.AddRow(coin.ToUpper(), currentPrice.ToString("C"));
 			}
 
@@ -403,7 +440,7 @@ namespace Trader
 				return;
 			}
 
-			decimal price = RuntimeContext.currentPrices[coinToBuy];
+			decimal price = runtimeContext.CurrentPrices[coinToBuy];
 			decimal quantityToBuy = AnsiConsole.Prompt(
 				new TextPrompt<decimal>($"Enter the quantity of {coinToBuy.ToUpper()} to buy (0 to cancel):")
 			);
@@ -412,7 +449,7 @@ namespace Trader
 
 			decimal totalCost = quantityToBuy * price;
 
-			if (RuntimeContext.balance >= totalCost)
+			if (runtimeContext.Balance >= totalCost)
 			{
 				var buyResult = tradeOperations.Buy(coinToBuy, quantityToBuy, price);
 				foreach (var result in buyResult)
@@ -465,18 +502,18 @@ namespace Trader
 			table.AddColumn(new TableColumn("[bold yellow]Parameter[/]").LeftAligned());
 			table.AddColumn(new TableColumn("[bold yellow]Value[/]").LeftAligned());
 
-			table.AddRow("[bold cyan]API URL[/]", Parameters.API_URL);
-			table.AddRow("[bold cyan]Database Path[/]", Parameters.dbPath);
-			table.AddRow("[bold cyan]Period interval (Seconds)[/]", Parameters.CustomIntervalSeconds.ToString());
-			table.AddRow("[bold cyan]Analyze Periods/seconds[/]", $"{Parameters.CustomPeriods}/{Parameters.CustomIntervalSeconds * Parameters.CustomPeriods}");
-			table.AddRow("[bold cyan]Stop-Loss Threshold[/]", Parameters.stopLossThreshold.ToString("P"));
-			table.AddRow("[bold cyan]Profit-Taking Threshold[/]", Parameters.profitTakingThreshold.ToString("P"));
-			table.AddRow("[bold cyan]Starting Balance[/]", Parameters.startingBalance.ToString("C"));
-			table.AddRow("[bold cyan]Max Investment Per Coin[/]", Parameters.maxInvestmentPerCoin.ToString("C"));
-			table.AddRow("[bold cyan]Transaction Fee Rate[/]", Parameters.transactionFeeRate.ToString("P"));
-			table.AddRow("[bold cyan]Trailing stop loss percentage[/]", Parameters.trailingStopLossPercentage.ToString("P"));
-			table.AddRow("[bold cyan]Dollar cost averaging amount[/]", Parameters.dollarCostAveragingAmount.ToString("C"));
-			table.AddRow("[bold cyan]Dollar cost averaging time interval (seconds)[/]", Parameters.dollarCostAveragingSecondsInterval.ToString());
+			table.AddRow("[bold cyan]API URL[/]", settingsService.Settings.API_URL);
+			table.AddRow("[bold cyan]Database Path[/]", settingsService.Settings.DbPath);
+			table.AddRow("[bold cyan]Period interval (Seconds)[/]", settingsService.Settings.CustomIntervalSeconds.ToString());
+			table.AddRow("[bold cyan]Analyze Periods/seconds[/]", $"{settingsService.Settings.CustomPeriods}/{settingsService.Settings.CustomIntervalSeconds * settingsService.Settings.CustomPeriods}");
+			table.AddRow("[bold cyan]Stop-Loss Threshold[/]", settingsService.Settings.StopLossThreshold.ToString("P"));
+			table.AddRow("[bold cyan]Profit-Taking Threshold[/]", settingsService.Settings.ProfitTakingThreshold.ToString("P"));
+			table.AddRow("[bold cyan]Starting Balance[/]", settingsService.Settings.StartingBalance.ToString("C"));
+			table.AddRow("[bold cyan]Max Investment Per Coin[/]", settingsService.Settings.MaxInvestmentPerCoin.ToString("C"));
+			table.AddRow("[bold cyan]Transaction Fee Rate[/]", settingsService.Settings.TransactionFeeRate.ToString("P"));
+			table.AddRow("[bold cyan]Trailing stop loss percentage[/]", settingsService.Settings.TrailingStopLossPercentage.ToString("P"));
+			table.AddRow("[bold cyan]Dollar cost averaging amount[/]", settingsService.Settings.DollarCostAveragingAmount.ToString("C"));
+			table.AddRow("[bold cyan]Dollar cost averaging time interval (seconds)[/]", settingsService.Settings.DollarCostAveragingSecondsInterval.ToString());
 
 			AnsiConsole.Write(table);
 			AnsiConsole.MarkupLine("\n[bold yellow]==========================[/]");
@@ -486,7 +523,7 @@ namespace Trader
 		{
 			AnsiConsole.MarkupLine("\n[bold yellow]=== Backtest strategy analysis ===[/]\n");
 
-			decimal initialBalance = Parameters.startingBalance;
+			decimal initialBalance = settingsService.Settings.StartingBalance;
 			decimal balance = initialBalance;
 			decimal portfolioValue = 0;
 			decimal totalProfitOrLoss = 0;
@@ -503,9 +540,9 @@ namespace Trader
 				string coinName = coinData.Key;
 				List<HistoricalData> coinHistory = coinData.Value;
 
-				for (int i = Parameters.CustomPeriods; i < coinHistory.Count; i++)
+				for (int i = settingsService.Settings.CustomPeriods; i < coinHistory.Count; i++)
 				{
-					var recentHistory = coinHistory.Skip(i - Parameters.CustomPeriods).Take(Parameters.CustomPeriods).Select(h => h.Price).ToList();
+					var recentHistory = coinHistory.Skip(i - settingsService.Settings.CustomPeriods).Take(settingsService.Settings.CustomPeriods).Select(h => h.Price).ToList();
 					var data = coinHistory[i];
 
 					decimal rsi = IndicatorCalculations.CalculateRSI(recentHistory, recentHistory.Count);
@@ -515,16 +552,16 @@ namespace Trader
 					decimal priceChangeWindow = IndicatorCalculations.CalculatePriceChange(recentHistory);
 
 					// Calculate Bollinger Bands
-					var (middleBand, upperBand, lowerBand) = IndicatorCalculations.CalculateBollingerBands(recentHistory, Parameters.CustomPeriods);
+					var (middleBand, upperBand, lowerBand) = IndicatorCalculations.CalculateBollingerBands(recentHistory, settingsService.Settings.CustomPeriods);
 
 					// Calculate ATR (assuming high, low, and close prices are available)
 					var highPrices = recentHistory; // Replace with actual high prices
 					var lowPrices = recentHistory; // Replace with actual low prices
 					var closePrices = recentHistory; // Replace with actual close prices
-					decimal atr = IndicatorCalculations.CalculateATR(highPrices, lowPrices, closePrices, Parameters.CustomPeriods);
+					decimal atr = IndicatorCalculations.CalculateATR(highPrices, lowPrices, closePrices, settingsService.Settings.CustomPeriods);
 
 					// Calculate volatility
-					decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, Parameters.CustomPeriods);
+					decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, settingsService.Settings.CustomPeriods);
 					var (adjustedStopLoss, adjustedProfitTaking) = AdjustThresholdsBasedOnVolatility(volatility);
 
 					// Trading signals
@@ -533,7 +570,7 @@ namespace Trader
 						// Buy signal
 						decimal quantity = balance / data.Price;
 						decimal cost = quantity * data.Price;
-						decimal fee = cost * Parameters.transactionFeeRate;
+						decimal fee = cost * settingsService.Settings.TransactionFeeRate;
 						decimal totalCost = cost + fee;
 
 						if (balance >= totalCost)
@@ -570,7 +607,7 @@ namespace Trader
 						// Sell signal
 						decimal quantityToSell = portfolio[coinName];
 						decimal amountToSell = quantityToSell * data.Price;
-						decimal fee = amountToSell * Parameters.transactionFeeRate;
+						decimal fee = amountToSell * settingsService.Settings.TransactionFeeRate;
 						decimal netAmountToSell = amountToSell - fee;
 
 						// Calculate average cost basis
@@ -624,64 +661,14 @@ namespace Trader
 			AnsiConsole.MarkupLine("\n[bold yellow]=== End of backtest strategy analysis ===[/]");
 		}
 
-		private static List<HistoricalData> LoadHistoricalData()
-		{
-			var historicalData = new List<HistoricalData>();
-
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
-			{
-				conn.Open();
-				string query = @"
-			SELECT name, price, timestamp, ema, macd, rsi, sma, bollingerUpper, bollingerLower, atr, volatility
-			FROM Prices
-			ORDER BY timestamp ASC;";
-				using (var cmd = new SQLiteCommand(query, conn))
-				{
-					using (var reader = cmd.ExecuteReader())
-					{
-						while (reader.Read())
-						{
-							var data = new HistoricalData
-							{
-								Name = reader.GetString(0),
-								Price = reader.GetDecimal(1),
-								Timestamp = reader.GetDateTime(2)
-							};
-
-							// Check for null values and handle them appropriately
-							data.EMA = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3);
-							data.MACD = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4);
-							data.RSI = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5);
-							data.SMA = reader.IsDBNull(6) ? 0 : reader.GetDecimal(6);
-							data.BollingerUpper = reader.IsDBNull(7) ? 0 : reader.GetDecimal(7);
-							data.BollingerLower = reader.IsDBNull(8) ? 0 : reader.GetDecimal(8);
-							data.ATR = reader.IsDBNull(9) ? 0 : reader.GetDecimal(9);
-							data.Volatility = reader.IsDBNull(10) ? 0 : reader.GetDecimal(10);
-
-							historicalData.Add(data);
-						}
-					}
-				}
-			}
-
-			return historicalData;
-		}
-
 		private static void ResetDatabase()
 		{
-			if (File.Exists(Parameters.dbPath))
+			if (File.Exists(settingsService.Settings.DbPath))
 			{
-				File.Delete(Parameters.dbPath);
+				File.Delete(settingsService.Settings.DbPath);
 			}
 
-			InitializeDatabase(true);
-
-			RuntimeContext.balance = Parameters.startingBalance;
-			RuntimeContext.portfolio.Clear();
-			RuntimeContext.initialInvestments.Clear();
-			RuntimeContext.totalQuantityPerCoin.Clear();
-			RuntimeContext.totalCostPerCoin.Clear();
-			RuntimeContext.currentPeriodIndex = 0;
+			databaseService.InitializeRuntimeContext();
 
 			AnsiConsole.MarkupLine("[bold red]Database has been reset. Starting over...[/]");
 		}
@@ -690,7 +677,7 @@ namespace Trader
 		{
 			AnsiConsole.MarkupLine("\n[bold yellow]=== Database statistics ===[/]\n");
 
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 				string statsQuery = @"
@@ -716,7 +703,7 @@ namespace Trader
 							decimal minPrice = reader.GetDecimal(2);
 							decimal maxPrice = reader.GetDecimal(3);
 							decimal avgPrice = reader.GetDecimal(4);
-							int inMemoryCount = RuntimeContext.priceHistory.ContainsKey(name) ? RuntimeContext.priceHistory[name].Count : 0;
+							int inMemoryCount = runtimeContext.PriceHistory.ContainsKey(name) ? runtimeContext.PriceHistory[name].Count : 0;
 
 							table.AddRow(
 								name.ToUpper(),
@@ -781,184 +768,11 @@ namespace Trader
 			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Database statistics ===[/]");
 		}
 
-		private static void InitializeDatabase(bool clearPreviousTransactions)
-		{
-			if (!File.Exists(Parameters.dbPath))
-			{
-				SQLiteConnection.CreateFile(Parameters.dbPath);
-			}
-
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
-			{
-				conn.Open();
-				string createTableQuery = @"
-				CREATE TABLE IF NOT EXISTS Prices (
-					id INTEGER PRIMARY KEY AUTOINCREMENT,
-					name TEXT NOT NULL,
-					price DECIMAL(18,8) NOT NULL,
-					sma DECIMAL(18,8),
-					ema DECIMAL(18,8),
-					rsi DECIMAL(18,8),
-					macd DECIMAL(18,8),
-					bollingerUpper DECIMAL(18,8),
-					bollingerLower DECIMAL(18,8),
-					atr DECIMAL(18,8),
-					volatility DECIMAL(18,8),
-					timestamp DATETIME DEFAULT (datetime('now', 'utc'))
-				);
-				CREATE TABLE IF NOT EXISTS Transactions (
-					id INTEGER PRIMARY KEY AUTOINCREMENT,
-					type TEXT NOT NULL,
-					name TEXT NOT NULL,
-					quantity DECIMAL(18,8) NOT NULL,
-					price DECIMAL(18,8) NOT NULL,
-					fee DECIMAL(18,8) NOT NULL DEFAULT 0.0,
-					gain_loss DECIMAL(18,8),
-					timestamp DATETIME DEFAULT (datetime('now', 'utc'))
-				);
-				CREATE TABLE IF NOT EXISTS DCAConfig (
-					coin TEXT PRIMARY KEY,
-					lastPurchaseTime DATETIME
-				);
-				CREATE TABLE IF NOT EXISTS TrailingStopLossConfig (
-					coin TEXT PRIMARY KEY,
-					stopLoss DECIMAL(18,8)
-				);";
-				using (var cmd = new SQLiteCommand(createTableQuery, conn))
-				{
-					cmd.ExecuteNonQuery();
-				}
-
-				// Load historical prices into priceHistory
-				RuntimeContext.priceHistory.Clear();
-
-				string selectQuery = $"SELECT name, price FROM Prices ORDER BY timestamp DESC;";
-				using (var selectCmd = new SQLiteCommand(selectQuery, conn))
-				{
-					using (var reader = selectCmd.ExecuteReader())
-					{
-						while (reader.Read())
-						{
-							string name = reader.GetString(0);
-							decimal price = reader.GetDecimal(1);
-
-							if (!RuntimeContext.priceHistory.ContainsKey(name))
-								RuntimeContext.priceHistory[name] = new List<decimal>();
-
-							if (RuntimeContext.priceHistory[name].Count < Parameters.CustomPeriods)
-								RuntimeContext.priceHistory[name].Insert(0, price); // Insert at the beginning to maintain order
-						}
-					}
-				}
-
-				if (clearPreviousTransactions)
-				{
-					// Clear the Transactions table
-					string clearTransactionsQuery = "DELETE FROM Transactions;";
-					using (var clearCmd = new SQLiteCommand(clearTransactionsQuery, conn))
-					{
-						clearCmd.ExecuteNonQuery();
-					}
-					return;
-				}
-
-				// Calculate the balance from transactions
-				RuntimeContext.balance = Parameters.startingBalance;
-				string transactionsQuery = "SELECT type, quantity, price, fee, gain_loss FROM Transactions ORDER BY timestamp ASC;";
-				using (var transactionsCmd = new SQLiteCommand(transactionsQuery, conn))
-				{
-					using (var reader = transactionsCmd.ExecuteReader())
-					{
-						while (reader.Read())
-						{
-							string type = reader.GetString(0);
-							decimal quantity = reader.GetDecimal(1);
-							decimal price = reader.GetDecimal(2);
-							decimal fee = reader.GetDecimal(3);
-							decimal? gainLoss = reader.IsDBNull(4) ? (decimal?)null : reader.GetDecimal(4);
-
-							if (type == "BUY")
-							{
-								RuntimeContext.balance -= (quantity * price) + fee;
-							}
-							else if (type == "SELL")
-							{
-								RuntimeContext.balance += (quantity * price) - fee;
-								if (gainLoss.HasValue)
-								{
-									RuntimeContext.balance += gainLoss.Value;
-								}
-							}
-						}
-					}
-				}
-
-				// Load the portfolio from the Transactions table
-				string portfolioQuery = @"
-    SELECT name, SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS quantity
-    FROM Transactions
-    GROUP BY name
-    HAVING quantity > 0;";
-				using (var portfolioCmd = new SQLiteCommand(portfolioQuery, conn))
-				{
-					using (var reader = portfolioCmd.ExecuteReader())
-					{
-						while (reader.Read())
-						{
-							string name = reader.GetString(0);
-							decimal quantity = reader.GetDecimal(1);
-							RuntimeContext.portfolio[name] = quantity;
-						}
-					}
-				}
-
-				// Load the initial investments from the Transactions table
-				string investmentsQuery = @"
-    SELECT name,
-           SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE 0 END) -
-           SUM(CASE WHEN type = 'SELL' THEN quantity * price ELSE 0 END) AS investment
-    FROM Transactions
-    GROUP BY name;";
-				using (var investmentsCmd = new SQLiteCommand(investmentsQuery, conn))
-				{
-					using (var reader = investmentsCmd.ExecuteReader())
-					{
-						while (reader.Read())
-						{
-							string name = reader.GetString(0);
-							decimal investment = reader.GetDecimal(1);
-							RuntimeContext.initialInvestments[name] = investment;
-						}
-					}
-				}
-
-				// Load total quantity and cost for cost basis calculations
-				string costBasisQuery = @"
-    SELECT name,
-        SUM(CASE WHEN type = 'BUY' THEN quantity ELSE -quantity END) AS totalQuantity,
-        SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE -quantity * price END) AS totalCost
-    FROM Transactions
-    GROUP BY name;";
-				using (var costBasisCmd = new SQLiteCommand(costBasisQuery, conn))
-				{
-					using (var reader = costBasisCmd.ExecuteReader())
-					{
-						while (reader.Read())
-						{
-							string name = reader.GetString(0);
-							decimal totalQuantity = reader.GetDecimal(1);
-							decimal totalCost = reader.GetDecimal(2);
-							RuntimeContext.totalQuantityPerCoin[name] = totalQuantity;
-							RuntimeContext.totalCostPerCoin[name] = totalCost;
-						}
-					}
-				}
-			}
-		}
+		
 
 		public static void SaveDCAConfig(string coin, DateTime lastPurchaseTime)
 		{
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 				string query = @"
@@ -976,7 +790,7 @@ namespace Trader
 
 		public static DateTime? GetLastPurchaseTime(string coin)
 		{
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 				string query = "SELECT lastPurchaseTime FROM DCAConfig WHERE coin = @coin;";
@@ -997,7 +811,7 @@ namespace Trader
 
 		public static void SaveTrailingStopLoss(string coin, decimal stopLoss)
 		{
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 				string query = @"
@@ -1015,7 +829,7 @@ namespace Trader
 
 		public static decimal? GetTrailingStopLoss(string coin)
 		{
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 				string query = "SELECT stopLoss FROM TrailingStopLossConfig WHERE coin = @coin;";
@@ -1040,24 +854,24 @@ namespace Trader
 			{
 				AnsiConsole.MarkupLine("\n[bold yellow]=== Fetching cryptocurrency prices... ===[/]");
 
-				var response = await client.GetStringAsync(Parameters.API_URL);
+				var response = await client.GetStringAsync(settingsService.Settings.API_URL);
 				var data = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, decimal>>>(response);
-				RuntimeContext.currentPrices = new Dictionary<string, decimal>();
+				runtimeContext.CurrentPrices = new Dictionary<string, decimal>();
 
 				foreach (var coin in data ?? new Dictionary<string, Dictionary<string, decimal>>())
 				{
 					string name = coin.Key;
 					decimal price = coin.Value["usd"];
-					RuntimeContext.currentPrices[name] = price;
+					runtimeContext.CurrentPrices[name] = price;
 
-					if (!RuntimeContext.priceHistory.ContainsKey(name))
-						RuntimeContext.priceHistory[name] = new List<decimal>();
+					if (!runtimeContext.PriceHistory.ContainsKey(name))
+						runtimeContext.PriceHistory[name] = new List<decimal>();
 
-					RuntimeContext.priceHistory[name].Add(price);
-					if (RuntimeContext.priceHistory[name].Count > Parameters.CustomPeriods)
-						RuntimeContext.priceHistory[name].RemoveAt(0);
+					runtimeContext.PriceHistory[name].Add(price);
+					if (runtimeContext.PriceHistory[name].Count > settingsService.Settings.CustomPeriods)
+						runtimeContext.PriceHistory[name].RemoveAt(0);
 				}
-				return RuntimeContext.currentPrices;
+				return runtimeContext.CurrentPrices;
 			}
 			catch (Exception ex)
 			{
@@ -1068,19 +882,19 @@ namespace Trader
 
 		private static void StoreIndicatorsInDatabase(Dictionary<string, decimal> prices)
 		{
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 				foreach (var coin in prices)
 				{
-					var recentHistory = RuntimeContext.priceHistory[coin.Key];
+					var recentHistory = runtimeContext.PriceHistory[coin.Key];
 					decimal rsi = IndicatorCalculations.CalculateRSI(recentHistory, recentHistory.Count);
 					decimal sma = IndicatorCalculations.CalculateSMA(recentHistory, recentHistory.Count);
 					decimal ema = IndicatorCalculations.CalculateEMASingle(recentHistory, recentHistory.Count);
 					var (macd, _, _, _) = IndicatorCalculations.CalculateMACD(recentHistory);
-					var (bollingerUpper, bollingerLower, _) = IndicatorCalculations.CalculateBollingerBands(recentHistory, Parameters.CustomPeriods);
-					decimal atr = IndicatorCalculations.CalculateATR(recentHistory, recentHistory, recentHistory, Parameters.CustomPeriods);
-					decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, Parameters.CustomPeriods);
+					var (bollingerUpper, bollingerLower, _) = IndicatorCalculations.CalculateBollingerBands(recentHistory, settingsService.Settings.CustomPeriods);
+					decimal atr = IndicatorCalculations.CalculateATR(recentHistory, recentHistory, recentHistory, settingsService.Settings.CustomPeriods);
+					decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, settingsService.Settings.CustomPeriods);
 
 					string insertQuery = @"
 					INSERT INTO Prices (name, price, rsi, sma, ema, macd, bollingerUpper, bollingerLower, atr, volatility)
@@ -1103,25 +917,6 @@ namespace Trader
 			}
 		}
 
-		public static void RecordTransaction(string type, string coinName, decimal quantity, decimal price, decimal fee, decimal? gainLoss)
-		{
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
-			{
-				conn.Open();
-				string insertQuery = "INSERT INTO Transactions (type, name, quantity, price, fee, gain_loss) VALUES (@type, @name, @quantity, @price, @fee, @gainLoss);";
-				using (var cmd = new SQLiteCommand(insertQuery, conn))
-				{
-					cmd.Parameters.AddWithValue("@type", type);
-					cmd.Parameters.AddWithValue("@name", coinName);
-					cmd.Parameters.AddWithValue("@quantity", quantity);
-					cmd.Parameters.AddWithValue("@price", price);
-					cmd.Parameters.AddWithValue("@fee", fee);
-					cmd.Parameters.AddWithValue("@gainLoss", gainLoss.HasValue ? (object)gainLoss.Value : DBNull.Value);
-					cmd.ExecuteNonQuery();
-				}
-			}
-		}
-
 		private static void ShowBalance(Dictionary<string, decimal> prices, bool verbose = true, bool showTitle = true)
 		{
 			if (showTitle) AnsiConsole.MarkupLine($"\n[bold yellow]=== Balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]\n");
@@ -1131,7 +926,7 @@ namespace Trader
 			decimal totalFees = CalculateTotalFees(); // Calculate total fees
 
 			// Calculate the total portfolio value and total investment
-			foreach (var coin in RuntimeContext.portfolio)
+			foreach (var coin in runtimeContext.Portfolio)
 			{
 				if (coin.Value > 0)
 				{
@@ -1139,13 +934,13 @@ namespace Trader
 					decimal value = coin.Value * currentPrice;
 					portfolioWorth += value;
 
-					decimal initialInvestment = RuntimeContext.totalCostPerCoin.ContainsKey(coin.Key) ? RuntimeContext.totalCostPerCoin[coin.Key] : 0;
+					decimal initialInvestment = runtimeContext.TotalCostPerCoin.ContainsKey(coin.Key) ? runtimeContext.TotalCostPerCoin[coin.Key] : 0;
 					totalInvestment += initialInvestment;
 				}
 			}
 
-			decimal totalWorth = RuntimeContext.balance + portfolioWorth;
-			decimal initialBalance = Parameters.startingBalance; // Starting balance
+			decimal totalWorth = runtimeContext.Balance + portfolioWorth;
+			decimal initialBalance = settingsService.Settings.StartingBalance; // Starting balance
 			decimal totalProfitOrLoss = totalWorth - initialBalance;
 			decimal percentageChange = initialBalance > 0 ? (totalProfitOrLoss / initialBalance) * 100 : 0;
 
@@ -1155,7 +950,7 @@ namespace Trader
 
 			// Calculate total gain or loss from all transactions
 			decimal totalTransactionGainOrLoss = 0;
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 				string query = "SELECT gain_loss FROM Transactions WHERE gain_loss IS NOT NULL;";
@@ -1176,7 +971,7 @@ namespace Trader
 			decimal totalGainOrLossIncludingFees = totalProfitOrLoss - totalFees;
 
 			// Calculate current gain/loss including fees
-			decimal currentGainOrLossIncludingFees = currentInvestmentGainOrLoss - (portfolioWorth * Parameters.transactionFeeRate);
+			decimal currentGainOrLossIncludingFees = currentInvestmentGainOrLoss - (portfolioWorth * settingsService.Settings.TransactionFeeRate);
 
 			// Create a table for balance information
 			var balanceTable = new Table();
@@ -1184,7 +979,7 @@ namespace Trader
 			balanceTable.AddColumn("Value");
 
 			balanceTable.AddRow("Total Investment across all coins", $"[bold cyan]{totalInvestment:C}[/]");
-			balanceTable.AddRow("Current balance", $"[bold green]{RuntimeContext.balance:C}[/]");
+			balanceTable.AddRow("Current balance", $"[bold green]{runtimeContext.Balance:C}[/]");
 			balanceTable.AddRow("Current portfolio worth", $"[bold green]{portfolioWorth:C}[/]");
 			balanceTable.AddRow("Total worth", $"[bold green]{totalWorth:C}[/]");
 			balanceTable.AddRow(totalTransactionGainOrLoss >= 0
@@ -1236,17 +1031,17 @@ namespace Trader
 					portfolioTable.AddColumn("Profit/Loss Including Fee");
 					portfolioTable.AddColumn("Percentage of Portfolio");
 
-					foreach (var coin in RuntimeContext.portfolio)
+					foreach (var coin in runtimeContext.Portfolio)
 					{
 						if (coin.Value > 0)
 						{
 							decimal currentPrice = prices.ContainsKey(coin.Key) ? prices[coin.Key] : 0;
 							decimal value = coin.Value * currentPrice;
-							decimal initialInvestment = RuntimeContext.totalCostPerCoin.ContainsKey(coin.Key) ? RuntimeContext.totalCostPerCoin[coin.Key] : 0;
+							decimal initialInvestment = runtimeContext.TotalCostPerCoin.ContainsKey(coin.Key) ? runtimeContext.TotalCostPerCoin[coin.Key] : 0;
 							decimal profitOrLoss = value - initialInvestment;
 
 							// Calculate profit/loss including fee
-							decimal fee = value * Parameters.transactionFeeRate;
+							decimal fee = value * settingsService.Settings.TransactionFeeRate;
 							decimal profitOrLossIncludingFee = profitOrLoss - fee;
 
 							decimal percentageOfPortfolio = portfolioWorth > 0 ? (value / portfolioWorth) * 100 : 0;
@@ -1286,7 +1081,7 @@ namespace Trader
 			int totalRecords = 0;
 			decimal totalFees = 0;
 
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 
@@ -1444,7 +1239,7 @@ namespace Trader
 		{
 			decimal totalFees = 0;
 
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 				string query = "SELECT SUM(fee) FROM Transactions;";
@@ -1465,9 +1260,9 @@ namespace Trader
 		{
 			DateTime startAnalysisTimeStamp = DateTime.Now.ToUniversalTime();
 
-			if (!analysisOnly) RuntimeContext.currentPeriodIndex++;
+			if (!analysisOnly) runtimeContext.CurrentPeriodIndex++;
 
-			AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Counter: {RuntimeContext.currentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
+			AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Counter: {runtimeContext.CurrentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
 
 			bool operationPerfomed = false;
 
@@ -1477,10 +1272,10 @@ namespace Trader
 
 				AnsiConsole.MarkupLine($"\n[bold cyan]{coin.Key.ToUpper()}[/]:");
 
-				if (!RuntimeContext.priceHistory.ContainsKey(coin.Key))
+				if (!runtimeContext.PriceHistory.ContainsKey(coin.Key))
 					continue;
 
-				var recentHistoryData = GetRecentHistoryRows(coin.Key, Parameters.CustomPeriods);
+				var recentHistoryData = GetRecentHistoryRows(coin.Key, settingsService.Settings.CustomPeriods);
 
 				var table = new Table();
 				table.AddColumn("Indicator");
@@ -1505,9 +1300,9 @@ namespace Trader
 				DateTime earliestTimestamp = recentHistoryData.First().Timestamp;
 				TimeSpan timeframe = DateTime.UtcNow - earliestTimestamp;
 
-				if (RuntimeContext.CheckForValidTimeInterval)
+				if (runtimeContext.CheckForValidTimeInterval)
 				{
-					int bufferSeconds = Parameters.CustomIntervalSeconds * 2; // Buffer for capture delays
+					int bufferSeconds = settingsService.Settings.CustomIntervalSeconds * 2; // Buffer for capture delays
 					if (timeframe.TotalSeconds < (analysisWindowSeconds - bufferSeconds) || timeframe.TotalSeconds > (analysisWindowSeconds + bufferSeconds))
 					{
 						table.AddRow("Analysis Status", $"[bold red]Not valid timeframe for {coin.Key} analysis. Required: {analysisWindowSeconds} seconds, Available: {timeframe.TotalSeconds} seconds (including buffer of {bufferSeconds} seconds).[/]");
@@ -1597,7 +1392,8 @@ namespace Trader
 						RSI = (float)rsi,
 						MACD = (float)macd
 					};
-					float predictedPrice = MachineLearningModel.Predict(cryptoData);
+
+					float? predictedPrice = mlService?.Predict(cryptoData);
 					table.AddRow("Predicted Price", $"[bold green]${predictedPrice:N2}[/]");
 				}
 				catch (Exception ex)
@@ -1614,11 +1410,11 @@ namespace Trader
 				if (!analysisOnly && operationsAllowed)
 				{
 					// Stop-loss and profit-taking strategy
-					if (RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0)
+					if (runtimeContext.Portfolio.ContainsKey(coin.Key) && runtimeContext.Portfolio[coin.Key] > 0)
 					{
-						decimal initialInvestment = RuntimeContext.initialInvestments.ContainsKey(coin.Key) ? RuntimeContext.initialInvestments[coin.Key] : 0;
-						decimal currentValue = RuntimeContext.portfolio[coin.Key] * coin.Value;
-						decimal fee = currentValue * Parameters.transactionFeeRate;
+						decimal initialInvestment = runtimeContext.InitialInvestments.ContainsKey(coin.Key) ? runtimeContext.InitialInvestments[coin.Key] : 0;
+						decimal currentValue = runtimeContext.Portfolio[coin.Key] * coin.Value;
+						decimal fee = currentValue * settingsService.Settings.TransactionFeeRate;
 						decimal profitOrLoss = (currentValue - initialInvestment - fee) / initialInvestment;
 
 						if (profitOrLoss <= adjustedStopLoss)
@@ -1644,8 +1440,8 @@ namespace Trader
 					}
 
 					// Trailing Stop-Loss
-					TrailingStopLoss.UpdateTrailingStopLoss(coin.Key, coin.Value, Parameters.trailingStopLossPercentage);
-					decimal trailingStopLoss = TrailingStopLoss.GetTrailingStopLoss(coin.Key);
+					UpdateTrailingStopLoss(coin.Key, coin.Value, settingsService.Settings.TrailingStopLossPercentage);
+					decimal trailingStopLoss = GetTrailingStopLoss(coin.Key) ?? decimal.MaxValue;
 					if (coin.Value <= trailingStopLoss)
 					{
 						operationsTable.AddRow("TRAILING STOP-LOSS", $"[bold red]Selling {coin.Key.ToUpper()} due to trailing stop-loss.[/]");
@@ -1658,7 +1454,7 @@ namespace Trader
 					}
 
 					// Dollar-Cost Averaging (DCA)
-					string[] dollarCostAveraging = DollarCostAveraging.ExecuteDCA(coin.Key, Parameters.dollarCostAveragingAmount, coin.Value, TimeSpan.FromSeconds(Parameters.dollarCostAveragingSecondsInterval));
+					string[] dollarCostAveraging = ExecuteDCA(coin.Key, settingsService.Settings.DollarCostAveragingAmount, coin.Value, TimeSpan.FromSeconds(settingsService.Settings.DollarCostAveragingSecondsInterval));
 					foreach (var result in dollarCostAveraging)
 					{
 						operationsTable.AddRow("DollarCostAveraging", result);
@@ -1671,7 +1467,7 @@ namespace Trader
 						decimal confidence = (30 - rsi) / 30 * 100;
 						operationsTable.AddRow("BUY Signal", $"[bold green]Confidence: {confidence:N2}%[/]");
 
-						if (RuntimeContext.balance > 0)
+						if (runtimeContext.Balance > 0)
 						{
 							if (operationsAllowed)
 							{
@@ -1688,7 +1484,7 @@ namespace Trader
 							}
 						}
 					}
-					else if (rsi > 70 && RuntimeContext.portfolio.ContainsKey(coin.Key) && RuntimeContext.portfolio[coin.Key] > 0 && coin.Value > sma && coin.Value > ema && macd > 0 && coin.Value > upperBand && atr > 0)
+					else if (rsi > 70 && runtimeContext.Portfolio.ContainsKey(coin.Key) && runtimeContext.Portfolio[coin.Key] > 0 && coin.Value > sma && coin.Value > ema && macd > 0 && coin.Value > upperBand && atr > 0)
 					{
 						decimal confidence = (rsi - 70) / 30 * 100;
 						operationsTable.AddRow("SELL Signal", $"[bold cyan]Confidence: {confidence:N2}%[/]");
@@ -1721,13 +1517,13 @@ namespace Trader
 				ShowBalance(prices, true, false);
 			}
 
-			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Counter: {RuntimeContext.currentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
+			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Counter: {runtimeContext.CurrentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
 		}
 
 		private static (decimal stopLossThreshold, decimal profitTakingThreshold) AdjustThresholdsBasedOnVolatility(decimal volatility)
 		{
-			decimal baseStopLoss = Parameters.stopLossThreshold;
-			decimal baseProfitTaking = Parameters.profitTakingThreshold;
+			decimal baseStopLoss = settingsService.Settings.StopLossThreshold;
+			decimal baseProfitTaking = settingsService.Settings.ProfitTakingThreshold;
 
 			// Adjust thresholds based on volatility
 			decimal adjustedStopLoss = baseStopLoss * (1 + volatility);
@@ -1739,7 +1535,7 @@ namespace Trader
 		private static List<(decimal Price, DateTime Timestamp)> GetRecentHistoryRows(string coin, int rowCount)
 		{
 			var recentHistory = new List<(decimal Price, DateTime Timestamp)>();
-			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
+			using (var conn = new SQLiteConnection($"Data Source={settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
 				string query = @"
