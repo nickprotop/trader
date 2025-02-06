@@ -163,10 +163,8 @@ namespace Trader
 					// Check if the background task is running, and if not, restart it
 					if (iterationTask.IsCompleted)
 					{
-						AnsiConsole.MarkupLine("[bold red]Background task stopped. Restarting...[/]");
-						cts = new CancellationTokenSource();
-						token = cts.Token;
-						iterationTask = StartBackgroundTask(token);
+						AnsiConsole.MarkupLine("[bold red]Background task stopped. Quitting...[/]");
+						break;
 					}
 
 					await Task.Delay(100); // Sleep for 100 milliseconds to prevent CPU overuse
@@ -200,12 +198,12 @@ namespace Trader
 					MACD = (float)h.MACD,
 					Label = (float)h.Price // Use the price as the label for simplicity
 				}).ToList();
-				MachineLearningModel.TrainModel(trainingData);			
+				MachineLearningModel.TrainModel(trainingData);
 
 				MachineLearningModel.SaveModel("model.zip"); // Save the model to a file
 				AnsiConsole.MarkupLine("[bold cyan]=== Model retrained and saved successfully! ===[/]");
-
-			} catch(Exception ex)
+			}
+			catch (Exception ex)
 			{
 				AnsiConsole.MarkupLine($"[bold red]Error: {ex.Message}\n[/]");
 				AnsiConsole.MarkupLine("[bold cyan]=== End of model retrain ===[/]");
@@ -230,7 +228,7 @@ namespace Trader
 							if (prices.Count == 0)
 							{
 								nextIterationTime = DateTime.UtcNow.AddSeconds(Parameters.CustomIntervalSeconds);
-								continue;								
+								continue;
 							}
 
 							StoreIndicatorsInDatabase(prices);
@@ -402,7 +400,6 @@ namespace Trader
 			}
 		}
 
-
 		private static bool IsConsoleAvailable()
 		{
 			try
@@ -455,7 +452,7 @@ namespace Trader
 			table.AddRow("[bold cyan]Dollar cost averaging amount[/]", Parameters.dollarCostAveragingAmount.ToString("C"));
 			table.AddRow("[bold cyan]Dollar cost averaging time interval (seconds)[/]", Parameters.dollarCostAveragingSecondsInterval.ToString());
 
-		AnsiConsole.Write(table);
+			AnsiConsole.Write(table);
 			AnsiConsole.MarkupLine("\n[bold yellow]==========================[/]");
 		}
 
@@ -747,7 +744,6 @@ namespace Trader
 				// Display total fees
 				decimal totalFees = CalculateTotalFees();
 				AnsiConsole.MarkupLine($"\n[bold yellow]Total Fees Incurred: [/][bold cyan]{totalFees:C}[/]");
-
 			}
 			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Database statistics ===[/]");
 		}
@@ -761,36 +757,36 @@ namespace Trader
 
 			using (var conn = new SQLiteConnection($"Data Source={Parameters.dbPath};Version=3;"))
 			{
-				conn.Open();
-				string createTableQuery = @"
-            CREATE TABLE IF NOT EXISTS Prices (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                price DECIMAL(18,8) NOT NULL,
-				sma DECIMAL(18,8),
-				ema DECIMAL(18,8),
-				rsi DECIMAL(18,8),
-				macd DECIMAL(18,8),
-                timestamp DATETIME DEFAULT (datetime('now', 'utc'))
-            );
-            CREATE TABLE IF NOT EXISTS Transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                quantity DECIMAL(18,8) NOT NULL,
-                price DECIMAL(18,8) NOT NULL,
-                fee DECIMAL(18,8) NOT NULL DEFAULT 0.0,
-                gain_loss DECIMAL(18,8),
-                timestamp DATETIME DEFAULT (datetime('now', 'utc'))
-            );
-            CREATE TABLE IF NOT EXISTS DCAConfig (
-                coin TEXT PRIMARY KEY,
-                lastPurchaseTime DATETIME
-            );
-            CREATE TABLE IF NOT EXISTS TrailingStopLossConfig (
-                coin TEXT PRIMARY KEY,
-                stopLoss DECIMAL(18,8)
-            );";
+					conn.Open();
+					string createTableQuery = @"
+				CREATE TABLE IF NOT EXISTS Prices (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					name TEXT NOT NULL,
+					price DECIMAL(18,8) NOT NULL,
+					sma DECIMAL(18,8),
+					ema DECIMAL(18,8),
+					rsi DECIMAL(18,8),
+					macd DECIMAL(18,8),
+					timestamp DATETIME DEFAULT (datetime('now', 'utc'))
+				);
+				CREATE TABLE IF NOT EXISTS Transactions (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					type TEXT NOT NULL,
+					name TEXT NOT NULL,
+					quantity DECIMAL(18,8) NOT NULL,
+					price DECIMAL(18,8) NOT NULL,
+					fee DECIMAL(18,8) NOT NULL DEFAULT 0.0,
+					gain_loss DECIMAL(18,8),
+					timestamp DATETIME DEFAULT (datetime('now', 'utc'))
+				);
+				CREATE TABLE IF NOT EXISTS DCAConfig (
+					coin TEXT PRIMARY KEY,
+					lastPurchaseTime DATETIME
+				);
+				CREATE TABLE IF NOT EXISTS TrailingStopLossConfig (
+					coin TEXT PRIMARY KEY,
+					stopLoss DECIMAL(18,8)
+				);";
 				using (var cmd = new SQLiteCommand(createTableQuery, conn))
 				{
 					cmd.ExecuteNonQuery();
@@ -881,8 +877,8 @@ namespace Trader
 
 				// Load the initial investments from the Transactions table
 				string investmentsQuery = @"
-    SELECT name, 
-           SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE 0 END) - 
+    SELECT name,
+           SUM(CASE WHEN type = 'BUY' THEN quantity * price ELSE 0 END) -
            SUM(CASE WHEN type = 'SELL' THEN quantity * price ELSE 0 END) AS investment
     FROM Transactions
     GROUP BY name;";
@@ -1001,7 +997,6 @@ namespace Trader
 			return null;
 		}
 
-
 		private static async Task<Dictionary<string, decimal>> GetCryptoPrices()
 		{
 			try
@@ -1048,7 +1043,7 @@ namespace Trader
 					var (macd, _, _, _) = IndicatorCalculations.CalculateMACD(recentHistory);
 
 					string insertQuery = @"
-					INSERT INTO Prices (name, price, rsi, sma, ema, macd) 
+					INSERT INTO Prices (name, price, rsi, sma, ema, macd)
 					VALUES (@name, @price, @rsi, @sma, @ema, @macd);";
 					using (var cmd = new SQLiteCommand(insertQuery, conn))
 					{
@@ -1236,7 +1231,6 @@ namespace Trader
 			if (showTitle) AnsiConsole.MarkupLine($"\n[bold yellow]=== End of balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]");
 		}
 
-
 		private static void ShowTransactionHistory()
 		{
 			AnsiConsole.MarkupLine("\n[bold yellow]=== Transactions History ===[/]\n");
@@ -1402,7 +1396,6 @@ namespace Trader
 			return choice == "Show All";
 		}
 
-
 		private static decimal CalculateTotalFees()
 		{
 			decimal totalFees = 0;
@@ -1550,16 +1543,23 @@ namespace Trader
 				table.AddRow("Market Sentiment", $"[bold green]{sentiment}[/]");
 
 				// Use the machine learning model to predict future price
-				var cryptoData = new CryptoData
+				try
 				{
-					Price = (float)coin.Value,
-					SMA = (float)sma,
-					EMA = (float)ema,
-					RSI = (float)rsi,
-					MACD = (float)macd
-				};
-				float predictedPrice = MachineLearningModel.Predict(cryptoData);
-				table.AddRow("Predicted Price", $"[bold green]${predictedPrice:N2}[/]");
+					var cryptoData = new CryptoData
+					{
+						Price = (float)coin.Value,
+						SMA = (float)sma,
+						EMA = (float)ema,
+						RSI = (float)rsi,
+						MACD = (float)macd
+					};
+					float predictedPrice = MachineLearningModel.Predict(cryptoData);
+					table.AddRow("Predicted Price", $"[bold green]${predictedPrice:N2}[/]");
+				}
+				catch (Exception ex)
+				{
+					table.AddRow("Prediction", $"[bold red]Error: {ex.Message}[/]");
+				}
 
 				AnsiConsole.Write(table);
 
@@ -1619,7 +1619,7 @@ namespace Trader
 					{
 						operationsTable.AddRow("DollarCostAveraging", result);
 						operationPerfomed = true;
-					}					
+					}
 
 					// Trading signals with confidence levels
 					if (rsi < 30 && coin.Value < sma && coin.Value < ema && macd < 0 && coin.Value < lowerBand && atr > 0)
