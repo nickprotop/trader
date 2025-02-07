@@ -1,10 +1,12 @@
 using Spectre.Console;
 using System;
 using System.Collections.Generic;
+using System.Data.SqlClient;
 using System.Data.SQLite;
 using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using trader.Models;
 using trader.Services;
@@ -12,26 +14,32 @@ using trader.Services;
 namespace Trader
 {
 	public class Trader
-    {
-        private readonly ITradeOperations _tradeOperations;
-        private readonly IMachineLearningService _mlService;
-        private readonly IDatabaseService _databaseService;
-        private readonly ISettingsService _settingsService;
-        private readonly RuntimeContext _runtimeContext;
-		private  readonly HttpClient httpClient = new HttpClient();
+	{
+		private readonly ITradeOperations _tradeOperations;
+		private readonly IMachineLearningService _mlService;
+		private readonly IDatabaseService _databaseService;
+		private readonly ISettingsService _settingsService;
+		private readonly RuntimeContext _runtimeContext;
+		private readonly HttpClient httpClient = new HttpClient();
 
 		private bool isRunning = true;
 		private int consoleWidth = Console.WindowWidth;
 		private const int headerHeight = 3;
 		private Window currentWindow = Window.MainMenu;
-		int visibleItems = Console.WindowHeight - headerHeight - footerHeight; // Content area height
-		int scrollPosition = 0;
-		const int footerHeight = 1;
+		private int visibleItems = Console.WindowHeight - headerHeight - footerHeight; // Content area height
+		private int scrollPosition = 0;
+		private const int footerHeight = 1;
+		private string footerText = string.Empty;
+
+		private readonly object consoleLock = new object();
+
+		private CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+		private CancellationToken cancellationToken;
 
 		private string[]? previousContent = null;
 		private int previousScrollPosition = -1;
 
-		Dictionary<Window, string[]> contentList = new Dictionary<Window, string[]>
+		private Dictionary<Window, string[]> contentList = new Dictionary<Window, string[]>
 		{
 			{ Window.MainMenu, new string[] { "Main Menu" } },
 			{ Window.LiveAnalysis, new string[] { "" } },
@@ -41,24 +49,29 @@ namespace Trader
 			{ Window.Statistics, new string[] { "Database Statistics" } }
 		};
 
-		enum Window { MainMenu, LiveAnalysis, Balance, Transactions, Statistics, Operations }
+		private enum Window
+		{ MainMenu, LiveAnalysis, Balance, Transactions, Statistics, Operations }
 
 		public Trader(
-            ITradeOperations tradeOperations,
-            IMachineLearningService mlService,
-            IDatabaseService databaseService,
-            ISettingsService settingsService,
-            RuntimeContext runtimeContext)
-        {
-            _tradeOperations = tradeOperations;
-            _mlService = mlService;
-            _databaseService = databaseService;
-            _settingsService = settingsService;
-            _runtimeContext = runtimeContext;
-        }
-
-        public async Task Run(string[] args)
+			ITradeOperations tradeOperations,
+			IMachineLearningService mlService,
+			IDatabaseService databaseService,
+			ISettingsService settingsService,
+			RuntimeContext runtimeContext)
 		{
+			_tradeOperations = tradeOperations;
+			_mlService = mlService;
+			_databaseService = databaseService;
+			_settingsService = settingsService;
+			_runtimeContext = runtimeContext;
+		}
+
+		public async Task Run(string[] args)
+		{
+			await Task.Delay(100); // Wait for the console to initialize
+
+			cancellationToken = cancellationTokenSource.Token;
+
 			DateTime nextIterationTime = DateTime.UtcNow;
 			Dictionary<string, decimal> prices = new Dictionary<string, decimal>();
 
@@ -111,22 +124,18 @@ namespace Trader
 				}
 
 				PrintProgramParameters();
-				PrintMenu();
+				PrintMainMenu();
 			});
 
 			var updateInfo = Task.Run(UpdateInfo);
 
-			try
+			var backgroundTask = Task.Run(async () =>
 			{
-				while (isRunning)
+				while (!cancellationToken.IsCancellationRequested)
 				{
-					HandleResize();
-					DrawHeader();
-					DrawScrollableContent(currentWindow);
-
 					if (DateTime.UtcNow >= nextIterationTime)
 					{
-						await Task.Run(() =>
+						lock (consoleLock)
 						{
 							AddContentToExistingWindow(Window.LiveAnalysis, CaptureAnsiConsoleMarkup(() =>
 							{
@@ -139,10 +148,26 @@ namespace Trader
 									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds)} seconds... ===[/]");
 								}
 							}));
-						});
+						}
 
 						// Update the next iteration time
-						nextIterationTime = DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds);						
+						nextIterationTime = DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds);
+					}
+
+					await Task.Delay(100, cancellationToken);
+				}
+			}, cancellationToken);
+
+			try
+			{
+				while (isRunning)
+				{
+					lock (consoleLock)
+					{
+						HandleResize();
+						DrawHeader();
+						DrawFooter();
+						DrawScrollableContent(currentWindow);
 					}
 
 					// Check for console input
@@ -150,51 +175,7 @@ namespace Trader
 					{
 						var key = Console.ReadKey(intercept: true);
 
-						HandleCommonKeys(key.Key);
-
-						if (key.Key == ConsoleKey.C)
-						{
-							ResetDatabase();
-							PrintMenu();
-							continue;
-						}
-
-						if (key.Key == ConsoleKey.T)
-						{
-							ActivateWindow(Window.Transactions);
-							ShowTransactionHistory();
-							PrintMenu();
-						}
-
-						if (key.Key == ConsoleKey.P)
-						{
-							PrintProgramParameters();
-							PrintMenu();
-						}
-
-						//if (key.Key == ConsoleKey.S)
-						//{
-							//SellCoinFromPortfolio();
-							//PrintMenu();
-						//}
-
-						//if (key.Key == ConsoleKey.B)
-						//{
-							//BuyCoin();
-							//PrintMenu();
-						//}
-
-						if (key.Key == ConsoleKey.K)
-						{
-							BacktestStrategy(_databaseService.LoadHistoricalData());
-							PrintMenu();
-						}
-
-						if (key.Key == ConsoleKey.R)
-						{
-							TrainAiModel(_mlService);
-							PrintMenu();
-						}
+						HandleInput(key.Key);
 					}
 				}
 			}
@@ -217,7 +198,7 @@ namespace Trader
 			}
 		}
 
-		string[] CaptureAnsiConsoleMarkup(Action action)
+		private string[] CaptureAnsiConsoleMarkup(Action action)
 		{
 			using var writer = new StringWriter();
 			var console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(writer) });
@@ -244,17 +225,21 @@ namespace Trader
 			return writer.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
 		}
 
-		void DrawScrollableContent(Window window)
+		private void DrawScrollableContent(Window window, bool forceRedraw = false)
 		{
 			if (contentList.TryGetValue(currentWindow, out string[]? content) && content != null)
 			{
-				if (content.SequenceEqual(previousContent ?? new string[0]) && scrollPosition == previousScrollPosition)
+				if (!forceRedraw)
 				{
-					// No need to redraw the content area
-					return;
+					if (content.SequenceEqual(previousContent ?? new string[0]) && scrollPosition == previousScrollPosition)
+					{
+						// No need to redraw the content area
+						return;
+					}
 				}
 
 				ClearContentArea();
+				Console.CursorVisible = false;
 
 				if (content.Length == 0)
 				{
@@ -278,15 +263,15 @@ namespace Trader
 			}
 		}
 
-		void ActivateWindow(Window window)
+		private void ActivateWindow(Window window)
 		{
 			// Clear only the content area below the header
 			ClearContentArea();
-			
+
 			currentWindow = window;
 
 			previousContent = null;
-			scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+			scrollPosition = 0;
 
 			switch (window)
 			{
@@ -295,17 +280,38 @@ namespace Trader
 					{
 						ShowBalance(_runtimeContext.CurrentPrices, true, true);
 					});
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 					break;
+
 				case Window.Statistics:
 					contentList[Window.Statistics] = CaptureAnsiConsoleMarkup(() =>
 					{
 						ShowDatabaseStats();
 					});
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
+				case Window.Transactions:
+					var (sortColumn, sortOrder) = PromptForSortOptions();
+					bool showAllRecords = PromptForShowAllRecords();
+					int recordsPerPage = showAllRecords ? int.MaxValue : PromptForRecordsPerPage();
+
+					contentList[Window.Transactions] = CaptureAnsiConsoleMarkup(() =>
+					{
+						ShowTransactionHistory(sortColumn, sortOrder, showAllRecords, recordsPerPage);
+					});
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
+				default:
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 					break;
 			}
+
+			Console.CursorVisible = false;
 		}
 
-		async Task UpdateInfo()
+		private async Task UpdateInfo()
 		{
 			while (isRunning)
 			{
@@ -314,18 +320,32 @@ namespace Trader
 			}
 		}
 
-		void DrawHeader()
+		private void DrawHeader()
 		{
 			Console.SetCursorPosition(0, 0);
 			AnsiConsole.Write(
-				new Panel($"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]")
-					.Header("[blue]Crypto Trading Bot[/]")
+				new Panel($"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis ({_runtimeContext.CurrentPeriodIndex}) | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]")
+					.Header("| [blue]Crypto Trading Bot[/] |")
 					.RoundedBorder()
 					.Expand()
 			);
 		}
 
-		void HandleCommonKeys(ConsoleKey key)
+		private void DrawFooter()
+		{
+			Console.SetCursorPosition(0, Console.WindowHeight - footerHeight);
+			string scrollingHints = "Use Up/Down arrows, Page Up/Down, Home/End to scroll";
+			string footer = $"[white on blue]{scrollingHints} | [red]Q[/]uit | {footerText.PadRight(Console.WindowWidth - scrollingHints.Length - 7 - 3)}[/]";
+			AnsiConsole.Markup(footer);
+		}
+
+		private void SetFooterText(string text)
+		{
+			footerText = text;
+			DrawFooter();
+		}
+
+		private void HandleInput(ConsoleKey key)
 		{
 			if (key == ConsoleKey.DownArrow)
 			{
@@ -389,16 +409,47 @@ namespace Trader
 				ActivateWindow(Window.LiveAnalysis);
 			}
 
+			if (key == ConsoleKey.T)
+			{
+				ActivateWindow(Window.Transactions);
+			}
+
 			if (key == ConsoleKey.Q)
 			{
 				AnsiConsole.Clear();
 
 				AnsiConsole.MarkupLine("[bold red]Exiting the program...[/]");
+				cancellationTokenSource.Cancel();
 				isRunning = false;
+			}
+
+			if (currentWindow == Window.MainMenu)
+			{
+				if (key == ConsoleKey.R)
+				{
+					ClearContentArea();
+
+					var prompt = AnsiConsole.Prompt(new SelectionPrompt<string>()
+					{
+						Title = "Reset database?",
+						PageSize = 10,
+						HighlightStyle = new Style(foreground: Color.Green)
+					}.AddChoices("Yes", "No"));
+
+					if (prompt == "Yes")
+					{
+						AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
+						{
+							ResetDatabase();
+						}));
+					}
+
+					DrawScrollableContent(Window.MainMenu, true);
+				}
 			}
 		}
 
-		void HandleResize()
+		private void HandleResize()
 		{
 			if (consoleWidth != Console.WindowWidth || Console.WindowHeight != visibleItems + headerHeight + footerHeight)
 			{
@@ -407,10 +458,11 @@ namespace Trader
 				Console.Clear();
 				previousContent = null;
 				DrawHeader();
+				DrawFooter();
 			}
 		}
 
-		void ClearContentArea()
+		private void ClearContentArea()
 		{
 			for (int i = headerHeight; i < Console.WindowHeight; i++)
 			{
@@ -420,22 +472,16 @@ namespace Trader
 			Console.SetCursorPosition(0, headerHeight);
 		}
 
-		private void PrintMenu()
+		private void PrintMainMenu()
 		{
 			AnsiConsole.MarkupLine("\n[bold yellow]=== Menu ===[/]\n");
-			AnsiConsole.MarkupLine("Press [bold green]'C'[/] to clear the database and start over.");
-			AnsiConsole.MarkupLine("Press [bold green]'T'[/] to view transaction history.");
-			AnsiConsole.MarkupLine("Press [bold green]'V'[/] to view balance and portfolio.");
-			AnsiConsole.MarkupLine("Press [bold green]'D'[/] to show database statistics.");
-			AnsiConsole.MarkupLine("Press [bold green]'P'[/] to show program parameters.");
-			AnsiConsole.MarkupLine("Press [bold green]'A'[/] to show last analysis strategy");
+			AnsiConsole.MarkupLine("Press [bold red]'R'[/] to clear the database and start over.");
+
 			AnsiConsole.MarkupLine("Press [bold green]'B'[/] to buy a coin.");
 			AnsiConsole.MarkupLine("Press [bold green]'S'[/] to sell a coin.");
+
 			AnsiConsole.MarkupLine("Press [bold green]'K'[/] to backtest strategy.");
 			AnsiConsole.MarkupLine("Press [bold green]'R'[/] to retrain the model.");
-			AnsiConsole.MarkupLine("");
-			AnsiConsole.MarkupLine("Press [bold green]'Q'[/] to quit the program.");
-			AnsiConsole.MarkupLine("\n[bold yellow]============[/]");
 		}
 
 		private void PrintProgramParameters()
@@ -462,7 +508,6 @@ namespace Trader
 			AnsiConsole.Write(table);
 			AnsiConsole.MarkupLine("\n[bold yellow]==========================[/]");
 		}
-
 
 		private void ResetDatabase()
 		{
@@ -498,7 +543,7 @@ namespace Trader
 					BollingerLower = (float)h.BollingerLower,
 					ATR = (float)h.ATR,
 					Volatility = (float)h.Volatility,
-					Label = (float)h.Price 
+					Label = (float)h.Price
 				}).ToList();
 				mlService.TrainModel(trainingData);
 
@@ -905,13 +950,8 @@ namespace Trader
 			return choice == "Show All";
 		}
 
-		private void ShowTransactionHistory()
+		private void ShowTransactionHistory(string? sortColumn, string? sortOrder, bool showAllRecords, int recordsPerPage)
 		{
-			AnsiConsole.MarkupLine("\n[bold yellow]=== Transactions History ===[/]\n");
-
-			var (sortColumn, sortOrder) = PromptForSortOptions();
-			bool showAllRecords = PromptForShowAllRecords();
-			int recordsPerPage = showAllRecords ? int.MaxValue : PromptForRecordsPerPage();
 			int currentPage = 1;
 			int totalRecords = 0;
 			decimal totalFees = 0;
@@ -1026,8 +1066,6 @@ namespace Trader
 					}
 				}
 			}
-
-			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Transactions History ===[/]");
 		}
 
 		private void ShowBalance(Dictionary<string, decimal> prices, bool verbose = true, bool showTitle = true)
@@ -1583,6 +1621,5 @@ namespace Trader
 
 			return (adjustedStopLoss, adjustedProfitTaking);
 		}
-
 	}
 }
