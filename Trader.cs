@@ -284,7 +284,7 @@ namespace Trader
 			switch (window)
 			{
 				case Window.MainMenu:
-					subMenuText = "[red]'R'[/] to reset the database.";
+					subMenuText = "[red]R[/]eset database.";
 					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 					break;
 
@@ -338,7 +338,7 @@ namespace Trader
 			Console.SetCursorPosition(0, 0);
 			AnsiConsole.Write(
 				new Panel(
-						$"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis ({_runtimeContext.CurrentPeriodIndex}) | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]\n{subMenuText}")
+						$"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis ({_runtimeContext.CurrentPeriodIndex}) | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]\nSubmenu: {subMenuText}")
 					.Header("| [blue]Crypto Trading Bot[/] |")
 					.RoundedBorder()
 					.Expand()
