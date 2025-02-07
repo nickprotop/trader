@@ -24,12 +24,13 @@ namespace Trader
 
 		private bool isRunning = true;
 		private int consoleWidth = Console.WindowWidth;
-		private const int headerHeight = 3;
+		private const int headerHeight = 4;
 		private Window currentWindow = Window.MainMenu;
 		private int visibleItems = Console.WindowHeight - headerHeight - footerHeight; // Content area height
 		private int scrollPosition = 0;
 		private const int footerHeight = 1;
 		private string footerText = string.Empty;
+		private string subMenuText = string.Empty;
 
 		private readonly object consoleLock = new object();
 
@@ -158,6 +159,8 @@ namespace Trader
 				}
 			}, cancellationToken);
 
+			ActivateWindow(Window.MainMenu);
+
 			try
 			{
 				while (isRunning)
@@ -273,8 +276,18 @@ namespace Trader
 			previousContent = null;
 			scrollPosition = 0;
 
+			subMenuText = string.Empty;
+			SetFooterText("(c) Nikolaos Protopapas");
+
+			SetFooterText(string.Empty);
+
 			switch (window)
 			{
+				case Window.MainMenu:
+					subMenuText = "[red]'R'[/] to reset the database.";
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
 				case Window.Balance:
 					contentList[Window.Balance] = CaptureAnsiConsoleMarkup(() =>
 					{
@@ -324,7 +337,8 @@ namespace Trader
 		{
 			Console.SetCursorPosition(0, 0);
 			AnsiConsole.Write(
-				new Panel($"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis ({_runtimeContext.CurrentPeriodIndex}) | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]")
+				new Panel(
+						$"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis ({_runtimeContext.CurrentPeriodIndex}) | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]\n{subMenuText}")
 					.Header("| [blue]Crypto Trading Bot[/] |")
 					.RoundedBorder()
 					.Expand()
