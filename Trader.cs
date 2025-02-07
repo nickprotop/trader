@@ -126,7 +126,6 @@ namespace Trader
 				}
 
 				PrintProgramParameters();
-				PrintMainMenu();
 			});
 
 			var updateInfo = Task.Run(UpdateInfo);
@@ -469,11 +468,6 @@ namespace Trader
 				{
 					var trainModel = Task.Run(() =>
 					{
-						//string[] trainModelOutput = CaptureAnsiConsoleMarkup(() =>
-						//{
-						//TrainAiModel(_mlService);
-						//});
-
 						List<string> trainModelOutput = TrainAiModel(_mlService);
 						string[] strings = trainModelOutput.ToArray();
 
@@ -508,18 +502,6 @@ namespace Trader
 				Console.Write(new string(' ', Console.WindowWidth));
 			}
 			Console.SetCursorPosition(0, headerHeight);
-		}
-
-		private void PrintMainMenu()
-		{
-			AnsiConsole.MarkupLine("\n[bold yellow]=== Menu ===[/]\n");
-			AnsiConsole.MarkupLine("Press [bold red]'R'[/] to clear the database and start over.");
-
-			AnsiConsole.MarkupLine("Press [bold green]'B'[/] to buy a coin.");
-			AnsiConsole.MarkupLine("Press [bold green]'S'[/] to sell a coin.");
-
-			AnsiConsole.MarkupLine("Press [bold green]'K'[/] to backtest strategy.");
-			AnsiConsole.MarkupLine("Press [bold green]'R'[/] to retrain the model.");
 		}
 
 		private void PrintProgramParameters()
@@ -563,7 +545,7 @@ namespace Trader
 		{
 			List<string> output = new List<string>();
 
-			output.Add("[bold cyan]\n=== Train AI model... ===\n[/]");
+			output.Add("\n=== Train AI model... ===");
 
 			try
 			{
@@ -588,12 +570,12 @@ namespace Trader
 				mlService.TrainModel(trainingData);
 
 				mlService.SaveModel("model.zip");
-				output.Add("[bold cyan]=== Model tained and saved successfully! ===[/]");
+				output.Add("=== Model tained and saved successfully! ===");
 			}
 			catch (Exception ex)
 			{
-				output.Add($"[bold red]Error: {ex.Message}\n[/]");
-				output.Add("[bold cyan]=== End of model train ===[/]");
+				output.Add($"Error: {ex.Message}\n]");
+				output.Add("=== End of model train ===");
 			}
 
 			return output;
