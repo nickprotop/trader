@@ -32,18 +32,17 @@ namespace trader.Services
 				.Append(mlContext.Transforms.NormalizeMinMax("Features"))
 				.Append(mlContext.Regression.Trainers.Sdca(labelColumnName: "Label"));
 
-			AnsiConsole.WriteLine("Performing cross-validation in background...");
-			Task.Run(() => CrossValidateModel(dataView, pipeline));
-
 			AnsiConsole.WriteLine("Training started.");
 			model = pipeline.Fit(dataView);
 			AnsiConsole.WriteLine("Training completed.");
 		}
 
-		private static void CrossValidateModel(IDataView dataView, IEstimator<ITransformer> pipeline)
+		public void CrossValidateModel(IDataView dataView, IEstimator<ITransformer> pipeline)
 		{
 			try
 			{
+				AnsiConsole.WriteLine("Performing cross-validation in background...");
+
 				var cvResults = mlContext.Regression.CrossValidate(dataView, pipeline, numberOfFolds: 5);
 				var avgR2 = cvResults.Average(r => r.Metrics.RSquared);
 				var avgRMSE = cvResults.Average(r => r.Metrics.RootMeanSquaredError);

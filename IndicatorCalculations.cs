@@ -109,10 +109,21 @@ namespace Trader
 			return (sma, upperBand, lowerBand);
 		}
 
-		public static decimal CalculateATR(List<decimal> highPrices, List<decimal> lowPrices, List<decimal> closePrices, int period)
+		public static decimal CalculateATR(List<decimal> recentPrices, int period)
 		{
-			if (highPrices.Count < period || lowPrices.Count < period || closePrices.Count < period)
+			if (recentPrices.Count < period)
 				return 0;
+
+			var highPrices = new List<decimal>();
+			var lowPrices = new List<decimal>();
+			var closePrices = new List<decimal>();
+
+			for (int i = 1; i < recentPrices.Count; i++)
+			{
+				highPrices.Add(recentPrices[i]);
+				lowPrices.Add(recentPrices[i]);
+				closePrices.Add(recentPrices[i - 1]);
+			}
 
 			var trueRanges = new List<decimal>();
 			for (int i = 1; i < highPrices.Count; i++)

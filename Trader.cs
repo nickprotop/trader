@@ -2,6 +2,7 @@ using Spectre.Console;
 using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -17,8 +18,30 @@ namespace Trader
         private readonly IDatabaseService _databaseService;
         private readonly ISettingsService _settingsService;
         private readonly RuntimeContext _runtimeContext;
-
 		private  readonly HttpClient httpClient = new HttpClient();
+
+		private bool isRunning = true;
+		private int consoleWidth = Console.WindowWidth;
+		private const int headerHeight = 3;
+		private Window currentWindow = Window.MainMenu;
+		int visibleItems = Console.WindowHeight - headerHeight - footerHeight; // Content area height
+		int scrollPosition = 0;
+		const int footerHeight = 1;
+
+		private string[]? previousContent = null;
+		private int previousScrollPosition = -1;
+
+		Dictionary<Window, string[]> contentList = new Dictionary<Window, string[]>
+		{
+			{ Window.MainMenu, new string[] { "Main Menu" } },
+			{ Window.LiveAnalysis, new string[] { "" } },
+			{ Window.Balance, new string[] { "Balance and Portfolio" } },
+			{ Window.Transactions, new string[] { "Transaction History" } },
+			{ Window.Operations, new string[] { "Operations" } },
+			{ Window.Statistics, new string[] { "Database Statistics" } }
+		};
+
+		enum Window { MainMenu, LiveAnalysis, Balance, Transactions, Statistics, Operations }
 
 		public Trader(
             ITradeOperations tradeOperations,
@@ -36,9 +59,12 @@ namespace Trader
 
         public async Task Run(string[] args)
 		{
+			DateTime nextIterationTime = DateTime.UtcNow;
+			Dictionary<string, decimal> prices = new Dictionary<string, decimal>();
+
 			bool performResetDatabase = args.Contains("-c");
 
-			AnsiConsole.MarkupLine("[bold yellow]=== Welcome to the Crypto Trading Bot ===[/]");
+			Console.CursorVisible = false;
 
 			if (performResetDatabase)
 			{
@@ -69,32 +95,63 @@ namespace Trader
 				}
 			}
 
-			PrintProgramParameters();
-
-			// Load the model if it exists
-			if (File.Exists("model.zip"))
+			contentList[Window.MainMenu] = CaptureAnsiConsoleMarkup(() =>
 			{
-				_mlService.LoadModel("model.zip");
-				AnsiConsole.MarkupLine("[bold green]\n=== Model loaded successfully! ===[/]");
-			}
-			else
-			{
-				TrainAiModel(_mlService);
-			}
+				AnsiConsole.MarkupLine("[bold yellow]=== Welcome to the Crypto Trading Bot ===[/]");
 
-			var cts = new CancellationTokenSource();
-			var token = cts.Token;
+				// Load the model if it exists
+				if (File.Exists("model.zip"))
+				{
+					_mlService.LoadModel("model.zip");
+					AnsiConsole.MarkupLine("[bold green]\n=== Model loaded successfully! ===[/]");
+				}
+				else
+				{
+					TrainAiModel(_mlService);
+				}
 
-			var iterationTask = StartBackgroundTask(token);
+				PrintProgramParameters();
+				PrintMenu();
+			});
+
+			var updateInfo = Task.Run(UpdateInfo);
 
 			try
 			{
-				while (true)
+				while (isRunning)
 				{
+					HandleResize();
+					DrawHeader();
+					DrawScrollableContent(currentWindow);
+
+					if (DateTime.UtcNow >= nextIterationTime)
+					{
+						await Task.Run(() =>
+						{
+							AddContentToExistingWindow(Window.LiveAnalysis, CaptureAnsiConsoleMarkup(() =>
+							{
+								prices = GetCryptoPrices().Result;
+								if (prices.Count != 0)
+								{
+									StoreIndicatorsInDatabase(prices);
+									AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
+
+									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds)} seconds... ===[/]");
+								}
+							}));
+						});
+
+						// Update the next iteration time
+						nextIterationTime = DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds);						
+					}
+
 					// Check for console input
 					if (Console.KeyAvailable)
 					{
 						var key = Console.ReadKey(intercept: true);
+
+						HandleCommonKeys(key.Key);
+
 						if (key.Key == ConsoleKey.C)
 						{
 							ResetDatabase();
@@ -104,27 +161,9 @@ namespace Trader
 
 						if (key.Key == ConsoleKey.T)
 						{
+							ActivateWindow(Window.Transactions);
 							ShowTransactionHistory();
 							PrintMenu();
-						}
-
-						if (key.Key == ConsoleKey.V)
-						{
-							ShowBalance(_runtimeContext.CurrentPrices, true, true);
-							PrintMenu();
-						}
-
-						if (key.Key == ConsoleKey.D)
-						{
-							ShowDatabaseStats();
-							PrintMenu();
-						}
-
-						if (key.Key == ConsoleKey.Q)
-						{
-							AnsiConsole.MarkupLine("[bold red]Exiting the program...[/]");
-							cts.Cancel();
-							break;
 						}
 
 						if (key.Key == ConsoleKey.P)
@@ -133,23 +172,17 @@ namespace Trader
 							PrintMenu();
 						}
 
-						if (key.Key == ConsoleKey.A)
-						{
-							AnalyzeIndicators(_runtimeContext.CurrentPrices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, true);
-							PrintMenu();
-						}
+						//if (key.Key == ConsoleKey.S)
+						//{
+							//SellCoinFromPortfolio();
+							//PrintMenu();
+						//}
 
-						if (key.Key == ConsoleKey.S)
-						{
-							SellCoinFromPortfolio();
-							PrintMenu();
-						}
-
-						if (key.Key == ConsoleKey.B)
-						{
-							BuyCoin();
-							PrintMenu();
-						}
+						//if (key.Key == ConsoleKey.B)
+						//{
+							//BuyCoin();
+							//PrintMenu();
+						//}
 
 						if (key.Key == ConsoleKey.K)
 						{
@@ -163,75 +196,228 @@ namespace Trader
 							PrintMenu();
 						}
 					}
-
-					// Check if the background task is running, and if not, restart it
-					if (iterationTask.IsCompleted)
-					{
-						AnsiConsole.MarkupLine("[bold red]Background task stopped. Quitting...[/]");
-						break;
-					}
-
-					await Task.Delay(100); // Sleep for 100 milliseconds to prevent CPU overuse
 				}
 			}
 			catch (Exception ex)
 			{
+				AnsiConsole.Clear();
 				AnsiConsole.MarkupLine($"[bold red]Error: {ex.Message}[/]");
-			}
-			finally
-			{
-				// Ensure the background task is properly disposed of when exiting
-				await iterationTask;
-				cts.Dispose();
 			}
 		}
 
-		private Task StartBackgroundTask(CancellationToken token)
+		private void AddContentToExistingWindow(Window window, string[] newContent)
 		{
-			return Task.Run(async () =>
+			if (contentList.TryGetValue(window, out var existingContent))
 			{
-				DateTime nextIterationTime = DateTime.UtcNow;
-				Dictionary<string, decimal> prices = new Dictionary<string, decimal>();
+				contentList[window] = existingContent.Concat(newContent).ToArray();
+			}
+			else
+			{
+				contentList[window] = newContent;
+			}
+		}
 
-				try
+		string[] CaptureAnsiConsoleMarkup(Action action)
+		{
+			using var writer = new StringWriter();
+			var console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(writer) });
+
+			console.Profile.Width = Console.WindowWidth > 100 ? 100 : Console.WindowWidth;
+			console.Profile.Height = Console.WindowHeight;
+
+			// Temporarily replace the global AnsiConsole with our custom console
+			var originalConsole = AnsiConsole.Console;
+			AnsiConsole.Console = console;
+
+			try
+			{
+				// Run the function using the custom console
+				action.Invoke();
+			}
+			finally
+			{
+				// Restore the original AnsiConsole
+				AnsiConsole.Console = originalConsole;
+			}
+
+			// Convert captured output to a string array
+			return writer.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+		}
+
+		void DrawScrollableContent(Window window)
+		{
+			if (contentList.TryGetValue(currentWindow, out string[]? content) && content != null)
+			{
+				if (content.SequenceEqual(previousContent ?? new string[0]) && scrollPosition == previousScrollPosition)
 				{
-					while (!token.IsCancellationRequested)
+					// No need to redraw the content area
+					return;
+				}
+
+				ClearContentArea();
+
+				if (content.Length == 0)
+				{
+					Console.SetCursorPosition(2, headerHeight);
+					AnsiConsole.MarkupLine("[red]No content available.[/]");
+					return;
+				}
+
+				int itemsToDisplay = Math.Min(visibleItems, content.Length);
+				int endPosition = Math.Min(scrollPosition + itemsToDisplay, content.Length);
+
+				for (int i = scrollPosition; i < endPosition; i++)
+				{
+					Console.SetCursorPosition(0, headerHeight + (i - scrollPosition));
+					AnsiConsole.WriteLine($"{content[i]}");
+				}
+
+				// Update previous content and scroll position
+				previousContent = content;
+				previousScrollPosition = scrollPosition;
+			}
+		}
+
+		void ActivateWindow(Window window)
+		{
+			// Clear only the content area below the header
+			ClearContentArea();
+			
+			currentWindow = window;
+
+			previousContent = null;
+			scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+
+			switch (window)
+			{
+				case Window.Balance:
+					contentList[Window.Balance] = CaptureAnsiConsoleMarkup(() =>
 					{
-						// Check if it's time for the next iteration
-						if (DateTime.UtcNow >= nextIterationTime)
-						{
-							prices = await GetCryptoPrices();
-							if (prices.Count == 0)
-							{
-								nextIterationTime = DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds);
-								continue;
-							}
+						ShowBalance(_runtimeContext.CurrentPrices, true, true);
+					});
+					break;
+				case Window.Statistics:
+					contentList[Window.Statistics] = CaptureAnsiConsoleMarkup(() =>
+					{
+						ShowDatabaseStats();
+					});
+					break;
+			}
+		}
 
-							StoreIndicatorsInDatabase(prices);
-							AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
+		async Task UpdateInfo()
+		{
+			while (isRunning)
+			{
+				// Do update work here
+				await Task.Delay(100);
+			}
+		}
 
-							PrintMenu();
+		void DrawHeader()
+		{
+			Console.SetCursorPosition(0, 0);
+			AnsiConsole.Write(
+				new Panel($"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]")
+					.Header("[blue]Crypto Trading Bot[/]")
+					.RoundedBorder()
+					.Expand()
+			);
+		}
 
-							// Update the next iteration time
-							nextIterationTime = DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds);
-							AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update in {_settingsService.Settings.CustomIntervalSeconds} seconds... ===[/]");
-						}
-						else
-						{
-							// Optionally, you can sleep for a short duration to prevent CPU overuse
-							await Task.Delay(100, token); // Sleep for 100 milliseconds
-						}
-					}
-				}
-				catch (OperationCanceledException)
+		void HandleCommonKeys(ConsoleKey key)
+		{
+			if (key == ConsoleKey.DownArrow)
+			{
+				if (scrollPosition < contentList[currentWindow].Length - visibleItems)
 				{
-					AnsiConsole.MarkupLine("[bold red]Background task was canceled.[/]");
+					scrollPosition++;
 				}
-				catch (Exception ex)
+			}
+
+			if (key == ConsoleKey.UpArrow)
+			{
+				if (scrollPosition > 0)
 				{
-					AnsiConsole.MarkupLine($"[bold red]Error: {ex.Message}[/]");
+					scrollPosition--;
 				}
-			}, token);
+			}
+
+			if (key == ConsoleKey.PageDown)
+			{
+				if (scrollPosition < contentList[currentWindow].Length - visibleItems)
+				{
+					scrollPosition = Math.Min(scrollPosition + visibleItems, contentList[currentWindow].Length - visibleItems);
+				}
+			}
+
+			if (key == ConsoleKey.PageUp)
+			{
+				if (scrollPosition > 0)
+				{
+					scrollPosition = Math.Max(scrollPosition - visibleItems, 0);
+				}
+			}
+
+			if (key == ConsoleKey.Home)
+			{
+				scrollPosition = 0;
+			}
+
+			if (key == ConsoleKey.End)
+			{
+				scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+			}
+
+			if (key == ConsoleKey.M)
+			{
+				ActivateWindow(Window.MainMenu);
+			}
+
+			if (key == ConsoleKey.B)
+			{
+				ActivateWindow(Window.Balance);
+			}
+
+			if (key == ConsoleKey.S)
+			{
+				ActivateWindow(Window.Statistics);
+			}
+
+			if (key == ConsoleKey.A)
+			{
+				ActivateWindow(Window.LiveAnalysis);
+			}
+
+			if (key == ConsoleKey.Q)
+			{
+				AnsiConsole.Clear();
+
+				AnsiConsole.MarkupLine("[bold red]Exiting the program...[/]");
+				isRunning = false;
+			}
+		}
+
+		void HandleResize()
+		{
+			if (consoleWidth != Console.WindowWidth || Console.WindowHeight != visibleItems + headerHeight + footerHeight)
+			{
+				consoleWidth = Console.WindowWidth;
+				visibleItems = Console.WindowHeight - headerHeight - footerHeight;
+				Console.Clear();
+				previousContent = null;
+				DrawHeader();
+			}
+		}
+
+		void ClearContentArea()
+		{
+			for (int i = headerHeight; i < Console.WindowHeight; i++)
+			{
+				Console.SetCursorPosition(0, i);
+				Console.Write(new string(' ', Console.WindowWidth));
+			}
+			Console.SetCursorPosition(0, headerHeight);
 		}
 
 		private void PrintMenu()
@@ -292,7 +478,7 @@ namespace Trader
 
 		private void TrainAiModel(IMachineLearningService mlService)
 		{
-			AnsiConsole.MarkupLine("[bold cyan]\n=== Retraining AI model... ===\n[/]");
+			AnsiConsole.MarkupLine("[bold cyan]\n=== Train AI model... ===\n[/]");
 
 			try
 			{
@@ -312,17 +498,17 @@ namespace Trader
 					BollingerLower = (float)h.BollingerLower,
 					ATR = (float)h.ATR,
 					Volatility = (float)h.Volatility,
-					Label = (float)h.Price // Use the price as the label for simplicity
+					Label = (float)h.Price 
 				}).ToList();
 				mlService.TrainModel(trainingData);
 
-				mlService.SaveModel("model.zip"); // Save the model to a file
-				AnsiConsole.MarkupLine("[bold cyan]=== Model retrained and saved successfully! ===[/]");
+				mlService.SaveModel("model.zip");
+				AnsiConsole.MarkupLine("[bold cyan]=== Model tained and saved successfully! ===[/]");
 			}
 			catch (Exception ex)
 			{
 				AnsiConsole.MarkupLine($"[bold red]Error: {ex.Message}\n[/]");
-				AnsiConsole.MarkupLine("[bold cyan]=== End of model retrain ===[/]");
+				AnsiConsole.MarkupLine("[bold cyan]=== End of model train ===[/]");
 			}
 		}
 
@@ -365,14 +551,17 @@ namespace Trader
 				conn.Open();
 				foreach (var coin in prices)
 				{
-					var recentHistory = _runtimeContext.CachedPrices[coin.Key];
-					decimal rsi = IndicatorCalculations.CalculateRSI(recentHistory, recentHistory.Count);
-					decimal sma = IndicatorCalculations.CalculateSMA(recentHistory, recentHistory.Count);
-					decimal ema = IndicatorCalculations.CalculateEMASingle(recentHistory, recentHistory.Count);
-					var (macd, _, _, _) = IndicatorCalculations.CalculateMACD(recentHistory);
-					var (bollingerUpper, bollingerLower, _) = IndicatorCalculations.CalculateBollingerBands(recentHistory, _settingsService.Settings.CustomPeriods);
-					decimal atr = IndicatorCalculations.CalculateATR(recentHistory, recentHistory, recentHistory, _settingsService.Settings.CustomPeriods);
-					decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, _settingsService.Settings.CustomPeriods);
+					var recentHistory = _databaseService.GetRecentPrices(coin.Key, 60);
+
+					List<decimal> recentPrices = recentHistory.Select(pt => pt.Price).ToList();
+
+					decimal rsi = IndicatorCalculations.CalculateRSI(recentPrices, recentHistory.Count);
+					decimal sma = IndicatorCalculations.CalculateSMA(recentPrices, recentHistory.Count);
+					decimal ema = IndicatorCalculations.CalculateEMASingle(recentPrices, recentHistory.Count);
+					var (macd, _, _, _) = IndicatorCalculations.CalculateMACD(recentPrices);
+					var (bollingerUpper, bollingerLower, _) = IndicatorCalculations.CalculateBollingerBands(recentPrices, recentPrices.Count);
+					decimal atr = IndicatorCalculations.CalculateATR(recentPrices, recentPrices.Count);
+					decimal volatility = IndicatorCalculations.CalculateVolatility(recentPrices, recentPrices.Count);
 
 					string insertQuery = @"
 					INSERT INTO Prices (name, price, rsi, sma, ema, macd, bollingerUpper, bollingerLower, atr, volatility)
@@ -431,10 +620,7 @@ namespace Trader
 					var (middleBand, upperBand, lowerBand) = IndicatorCalculations.CalculateBollingerBands(recentHistory, _settingsService.Settings.CustomPeriods);
 
 					// Calculate ATR (assuming high, low, and close prices are available)
-					var highPrices = recentHistory; // Replace with actual high prices
-					var lowPrices = recentHistory; // Replace with actual low prices
-					var closePrices = recentHistory; // Replace with actual close prices
-					decimal atr = IndicatorCalculations.CalculateATR(highPrices, lowPrices, closePrices, _settingsService.Settings.CustomPeriods);
+					decimal atr = IndicatorCalculations.CalculateATR(recentHistory, recentHistory.Count);
 
 					// Calculate volatility
 					decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, _settingsService.Settings.CustomPeriods);
@@ -1154,16 +1340,13 @@ namespace Trader
 				decimal priceChangeWindow = IndicatorCalculations.CalculatePriceChange(recentHistory);
 
 				// Calculate Bollinger Bands
-				var (middleBand, upperBand, lowerBand) = IndicatorCalculations.CalculateBollingerBands(recentHistory, customPeriods);
+				var (middleBand, upperBand, lowerBand) = IndicatorCalculations.CalculateBollingerBands(recentHistory, recentHistory.Count);
 
 				// Calculate ATR (assuming high, low, and close prices are available)
-				var highPrices = recentHistoryData.Select(x => x.Price).ToList(); // Replace with actual high prices
-				var lowPrices = recentHistoryData.Select(x => x.Price).ToList(); // Replace with actual low prices
-				var closePrices = recentHistoryData.Select(x => x.Price).ToList(); // Replace with actual close prices
-				decimal atr = IndicatorCalculations.CalculateATR(highPrices, lowPrices, closePrices, customPeriods);
+				decimal atr = IndicatorCalculations.CalculateATR(recentHistory, recentHistory.Count);
 
 				// Calculate volatility
-				decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, customPeriods);
+				decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, recentHistory.Count);
 				var (adjustedStopLoss, adjustedProfitTaking) = AdjustThresholdsBasedOnVolatility(volatility);
 
 				table.AddRow("Current Price", $"[bold green]${coin.Value:N2}[/]");
