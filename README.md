@@ -42,6 +42,29 @@ The Trader application is designed to manage and analyze cryptocurrency trading 
 - **Model Training**: Trains a machine learning model using historical data to predict future prices.
 - **Model Retraining**: Allows retraining of the machine learning model through the console menu.
 
+## UI Features
+- **Main Menu**: Access to various functionalities including resetting the database, retraining the AI model, and viewing startup parameters.
+- **Live Analysis**: Real-time analysis of cryptocurrency prices and indicators.
+- **Balance and Portfolio**: View current balance, portfolio worth, and detailed investment statistics.
+- **Transaction History**: View and sort transaction history with pagination support.
+- **Operations**: Perform buy and sell operations with detailed prompts and confirmations.
+- **Database Statistics**: View statistics about the stored price data and transaction history.
+
+## Code Features
+- **Technical Indicators**: Calculation of RSI, SMA, EMA, MACD, Bollinger Bands, ATR, and volatility.
+- **Machine Learning**: Train and use machine learning models to predict future prices.
+- **Backtesting**: Simulate trading strategies on historical data to evaluate performance.
+- **Trailing Stop-Loss**: Automatically adjust stop-loss thresholds based on price movements.
+- **Dollar-Cost Averaging (DCA)**: Automatically buy a fixed amount of cryptocurrency at regular intervals.
+- **Error Handling**: Robust error handling and user prompts for critical operations.
+
+## Styles and Patterns
+- **Dependency Injection**: Use of dependency injection for managing services and operations.
+- **Asynchronous Programming**: Extensive use of async/await for non-blocking operations.
+- **Console UI**: Use of Spectre.Console for rich console output and user interactions.
+- **Separation of Concerns**: Clear separation of different functionalities into services and models.
+- **Configuration Management**: Centralized management of settings and configurations.
+
 ## Technologies Used
 - **C# 13.0**: The application is developed using the latest features of C#.
 - **.NET 9**: Target framework for building and running the application.
