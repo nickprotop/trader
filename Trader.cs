@@ -1,3 +1,4 @@
+using Microsoft.VisualBasic;
 using Spectre.Console;
 using System;
 using System.Collections.Generic;
@@ -5,6 +6,7 @@ using System.Data.Entity.ModelConfiguration.Configuration;
 using System.Data.SqlClient;
 using System.Data.SQLite;
 using System.Diagnostics;
+using System.IO.Pipelines;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -27,7 +29,7 @@ namespace Trader
 		private int consoleWidth = Console.WindowWidth;
 		private const int headerHeight = 4;
 		private Window currentWindow = Window.MainMenu;
-		private int visibleItems = Console.WindowHeight - headerHeight - footerHeight; // Content area height
+		private int visibleItems = Console.WindowHeight - headerHeight - footerHeight;
 		private int scrollPosition = 0;
 		private const int footerHeight = 1;
 		private string footerText = string.Empty;
@@ -112,20 +114,18 @@ namespace Trader
 
 			contentList[Window.MainMenu] = CaptureAnsiConsoleMarkup(() =>
 			{
-				AnsiConsole.MarkupLine("[bold yellow]=== Welcome to the Crypto Trading Bot ===[/]");
+				AnsiConsole.MarkupLine("[bold green]> Welcome to the Crypto Trading Bot[/]");
 
 				// Load the model if it exists
 				if (File.Exists("model.zip"))
 				{
 					_mlService.LoadModel("model.zip");
-					AnsiConsole.MarkupLine("[bold green]\n=== Model loaded successfully! ===[/]");
+					AnsiConsole.MarkupLine("[bold green]> AI Model loaded successfully from cache (Consider retrain it to be uptodate)![/]");
 				}
 				else
 				{
 					TrainAiModel(_mlService);
 				}
-
-				PrintProgramParameters();
 			});
 
 			var updateInfo = Task.Run(UpdateInfo);
@@ -187,179 +187,6 @@ namespace Trader
 				AnsiConsole.Clear();
 				AnsiConsole.MarkupLine($"[bold red]Error: {ex.Message}[/]");
 			}
-		}
-
-		private void AddContentToExistingWindow(Window window, string[] newContent)
-		{
-			if (contentList.TryGetValue(window, out var existingContent))
-			{
-				contentList[window] = existingContent.Concat(newContent).ToArray();
-			}
-			else
-			{
-				contentList[window] = newContent;
-			}
-		}
-
-		private string[] CaptureAnsiConsoleMarkup(Action action)
-		{
-			using var writer = new StringWriter();
-			var console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(writer) });
-
-			console.Profile.Width = Console.WindowWidth > 100 ? 100 : Console.WindowWidth;
-			console.Profile.Height = Console.WindowHeight;
-
-			// Temporarily replace the global AnsiConsole with our custom console
-			var originalConsole = AnsiConsole.Console;
-			AnsiConsole.Console = console;
-
-			try
-			{
-				// Run the function using the custom console
-				action.Invoke();
-			}
-			finally
-			{
-				// Restore the original AnsiConsole
-				AnsiConsole.Console = originalConsole;
-			}
-
-			// Convert captured output to a string array
-			return writer.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
-		}
-
-		private void DrawScrollableContent(Window window, bool forceRedraw = false)
-		{
-			if (contentList.TryGetValue(currentWindow, out string[]? content) && content != null)
-			{
-				if (!forceRedraw)
-				{
-					if (content.SequenceEqual(previousContent ?? new string[0]) && scrollPosition == previousScrollPosition)
-					{
-						// No need to redraw the content area
-						return;
-					}
-				}
-
-				ClearContentArea();
-				Console.CursorVisible = false;
-
-				if (content.Length == 0)
-				{
-					Console.SetCursorPosition(2, headerHeight);
-					AnsiConsole.MarkupLine("[red]No content available.[/]");
-					return;
-				}
-
-				int itemsToDisplay = Math.Min(visibleItems, content.Length);
-				int endPosition = Math.Min(scrollPosition + itemsToDisplay, content.Length);
-
-				for (int i = scrollPosition; i < endPosition; i++)
-				{
-					Console.SetCursorPosition(0, headerHeight + (i - scrollPosition));
-					AnsiConsole.WriteLine($"{content[i]}");
-				}
-
-				// Update previous content and scroll position
-				previousContent = content;
-				previousScrollPosition = scrollPosition;
-			}
-		}
-
-		private void ActivateWindow(Window window)
-		{
-			// Clear only the content area below the header
-			ClearContentArea();
-
-			currentWindow = window;
-
-			previousContent = null;
-			scrollPosition = 0;
-
-			subMenuText = string.Empty;
-			SetFooterText("(c) Nikolaos Protopapas");
-
-			SetFooterText(string.Empty);
-
-			switch (window)
-			{
-				case Window.MainMenu:
-					subMenuText = "[red]R[/]eset database | Retrain A[cyan]I[/] model";
-					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
-					break;
-
-				case Window.Balance:
-					contentList[Window.Balance] = CaptureAnsiConsoleMarkup(() =>
-					{
-						ShowBalance(_runtimeContext.CurrentPrices, true, true);
-					});
-					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
-					break;
-
-				case Window.Statistics:
-					contentList[Window.Statistics] = CaptureAnsiConsoleMarkup(() =>
-					{
-						ShowDatabaseStats();
-					});
-					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
-					break;
-
-				case Window.Transactions:
-
-					ClearContentArea();
-
-					var (sortColumn, sortOrder) = PromptForSortOptions();
-					bool showAllRecords = PromptForShowAllRecords();
-					int recordsPerPage = showAllRecords ? int.MaxValue : PromptForRecordsPerPage();
-
-					contentList[Window.Transactions] = CaptureAnsiConsoleMarkup(() =>
-					{
-						ShowTransactionHistory(sortColumn, sortOrder, showAllRecords, recordsPerPage);
-					});
-					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
-					break;
-
-				default:
-					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
-					break;
-			}
-
-			Console.CursorVisible = false;
-		}
-
-		private async Task UpdateInfo()
-		{
-			while (isRunning)
-			{
-				// Do update work here
-				await Task.Delay(100);
-			}
-		}
-
-		private void DrawHeader()
-		{
-			Console.SetCursorPosition(0, 0);
-			AnsiConsole.Write(
-				new Panel(
-						$"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis ({_runtimeContext.CurrentPeriodIndex}) | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]\nSubmenu: {subMenuText}")
-					.Header("| [blue]Crypto Trading Bot[/] |")
-					.RoundedBorder()
-					.Expand()
-			);
-		}
-
-		private void DrawFooter()
-		{
-			Console.SetCursorPosition(0, Console.WindowHeight - footerHeight);
-			string scrollingHints = "Use Up/Down arrows, Page Up/Down, Home/End to scroll";
-			string footer = $"[white on blue]{scrollingHints} | [red]Q[/]uit | {footerText.PadRight(Console.WindowWidth - scrollingHints.Length - 7 - 3)}[/]";
-			AnsiConsole.Markup(footer);
-		}
-
-		private void SetFooterText(string text)
-		{
-			footerText = text;
-			DrawFooter();
 		}
 
 		private async Task HandleInput(ConsoleKey key)
@@ -440,6 +267,178 @@ namespace Trader
 				isRunning = false;
 			}
 
+			if (key == ConsoleKey.O)
+			{
+				ActivateWindow(Window.Operations);
+			}
+
+			if (currentWindow == Window.Operations)
+			{
+				if (key == ConsoleKey.U)
+				{
+					ClearContentArea();
+
+					var availableCoins = _runtimeContext.CurrentPrices.Keys.ToList();
+
+					if (availableCoins.Count == 0)
+					{
+						AnsiConsole.MarkupLine("[bold red]No coins available to buy.[/]");
+						DrawScrollableContent(Window.Operations, true);
+						return;
+					}
+
+					var table = new Table();
+					table.AddColumn("Coin");
+					table.AddColumn("Current Price");
+
+					foreach (var coin in availableCoins)
+					{
+						decimal currentPrice = _runtimeContext.CurrentPrices[coin];
+						table.AddRow(coin.ToUpper(), currentPrice.ToString("C"));
+					}
+
+					AnsiConsole.Write(table);
+
+					var coinToBuy = AnsiConsole.Prompt(
+						new SelectionPrompt<string>()
+							.Title("Select a coin to buy (or [bold red]Cancel[/]):")
+							.PageSize(10)
+							.AddChoices(availableCoins.Append("Cancel").ToArray())
+					);
+
+					if (coinToBuy == "Cancel")
+					{
+						AnsiConsole.MarkupLine("[bold yellow]Buy operation canceled.[/]");
+						DrawScrollableContent(Window.Operations, true);
+						return;
+					}
+
+					decimal price = _runtimeContext.CurrentPrices[coinToBuy];
+					decimal quantityToBuy = AnsiConsole.Prompt(
+						new TextPrompt<decimal>($"Enter the quantity of {coinToBuy.ToUpper()} to buy (0 to cancel):")
+					);
+
+					if (quantityToBuy == 0)
+					{
+						DrawScrollableContent(Window.Operations, true);
+						return;
+					}
+
+					decimal totalCost = quantityToBuy * price;
+
+					AddContentToExistingWindow(Window.Operations, CaptureAnsiConsoleMarkup(() =>
+					{
+						if (_runtimeContext.Balance >= totalCost)
+						{
+							var buyResult = _tradeOperations.Buy(coinToBuy, quantityToBuy, price);
+							foreach (var result in buyResult)
+							{
+								AnsiConsole.MarkupLine(result);
+							}
+						}
+						else
+						{
+							AnsiConsole.MarkupLine("[bold red]Insufficient balance to complete the purchase.[/]");
+						}
+					}));
+
+					DrawScrollableContent(Window.Operations, true);
+				}
+
+				if (key == ConsoleKey.E)
+				{
+					if (_runtimeContext.Portfolio.Count == 0)
+					{
+						AddContentToExistingWindow(Window.Operations, new string[] { "[bold red]No coins in the portfolio to sell.[/]" });
+						DrawScrollableContent(Window.Operations, true);
+						return;
+					}
+
+					ClearContentArea();
+
+					var table = new Table();
+					table.AddColumn("Coin");
+					table.AddColumn("Units Held");
+					table.AddColumn("Current Price");
+					table.AddColumn("Current Value");
+					table.AddColumn("Gain/Loss");
+					table.AddColumn("Gain/Loss Including Fee");
+
+					foreach (var coin in _runtimeContext.Portfolio)
+					{
+						if (coin.Value > 0)
+						{
+							decimal currentPrice = _runtimeContext.CurrentPrices.ContainsKey(coin.Key) ? _runtimeContext.CurrentPrices[coin.Key] : 0;
+							decimal value = coin.Value * currentPrice;
+
+							// Calculate gain or loss
+							decimal averageCostBasis = _runtimeContext.TotalCostPerCoin[coin.Key] / _runtimeContext.TotalQuantityPerCoin[coin.Key];
+							decimal costOfHeldCoins = averageCostBasis * coin.Value;
+							decimal gainOrLoss = value - costOfHeldCoins;
+
+							// Calculate gain or loss including fee
+							decimal fee = value * _settingsService.Settings.TransactionFeeRate;
+							decimal gainOrLossIncludingFee = gainOrLoss - fee;
+
+							string gainOrLossStr = gainOrLoss >= 0 ? $"[green]{gainOrLoss:C}[/]" : $"[red]{gainOrLoss:C}[/]";
+							string gainOrLossIncludingFeeStr = gainOrLossIncludingFee >= 0 ? $"[green]{gainOrLossIncludingFee:C}[/]" : $"[red]{gainOrLossIncludingFee:C}[/]";
+
+							table.AddRow(
+								coin.Key.ToUpper(),
+								coin.Value.ToString("N4"),
+								currentPrice.ToString("C"),
+								value.ToString("C"),
+								gainOrLossStr,
+								gainOrLossIncludingFeeStr
+							);
+						}
+					}
+
+					AnsiConsole.Write(table);
+
+					var coinToSell = AnsiConsole.Prompt(
+						new SelectionPrompt<string>()
+							.Title("Select a coin to sell (or [bold red]Cancel[/]):")
+							.PageSize(10)
+							.AddChoices(_runtimeContext.Portfolio.Keys.Where(k => _runtimeContext.Portfolio[k] > 0).Append("Cancel").ToArray())
+					);
+
+					if (coinToSell == "Cancel")
+					{
+						AnsiConsole.MarkupLine("[bold yellow]Sell operation canceled.[/]");
+						DrawScrollableContent(Window.Operations, true);
+						return;
+					}
+
+					AddContentToExistingWindow(Window.Operations, CaptureAnsiConsoleMarkup(() =>
+					{
+						if (_runtimeContext.Portfolio.ContainsKey(coinToSell) && _runtimeContext.Portfolio[coinToSell] > 0)
+						{
+							decimal currentPrice = _runtimeContext.CurrentPrices[coinToSell];
+							decimal quantityToSell = _runtimeContext.Portfolio[coinToSell];
+							decimal totalValue = quantityToSell * currentPrice;
+
+							// Calculate gain or loss
+							decimal averageCostBasis = _runtimeContext.TotalCostPerCoin[coinToSell] / _runtimeContext.TotalQuantityPerCoin[coinToSell];
+							decimal costOfSoldCoins = averageCostBasis * quantityToSell;
+							decimal gainOrLoss = totalValue - costOfSoldCoins;
+
+							var sellResult = _tradeOperations.Sell(coinToSell, currentPrice);
+							foreach (var result in sellResult)
+							{
+								AnsiConsole.MarkupLine(result);
+							}
+						}
+						else
+						{
+							AnsiConsole.MarkupLine("[bold red]Invalid selection or no units to sell.[/]");
+						}
+					}));
+
+					DrawScrollableContent(Window.Operations, true);
+				}
+			}
+
 			if (currentWindow == Window.MainMenu)
 			{
 				if (key == ConsoleKey.R)
@@ -468,17 +467,209 @@ namespace Trader
 				{
 					var trainModel = Task.Run(() =>
 					{
-						List<string> trainModelOutput = TrainAiModel(_mlService);
-						string[] strings = trainModelOutput.ToArray();
-
-						if (currentWindow == Window.MainMenu)
+						lock (consoleLock)
 						{
-							AddContentToExistingWindow(Window.MainMenu, strings);
-							DrawScrollableContent(Window.MainMenu, true);
+							AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
+							{
+								TrainAiModel(_mlService);
+							}));
+
+							if (currentWindow == Window.MainMenu)
+							{
+								DrawScrollableContent(Window.MainMenu, true);
+							}
 						}
 					});
 				}
+
+				if (key == ConsoleKey.P)
+				{
+					lock (consoleLock)
+					{
+						AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
+						{
+							PrintProgramParameters();
+						}));
+					}
+				}
 			}
+		}
+
+		private void ActivateWindow(Window window)
+		{
+			// Clear only the content area below the header
+			ClearContentArea();
+
+			currentWindow = window;
+
+			previousContent = null;
+			scrollPosition = 0;
+
+			subMenuText = string.Empty;
+			SetFooterText("(c) Nikolaos Protopapas");
+
+			switch (window)
+			{
+				case Window.MainMenu:
+					subMenuText = "[cyan]R[/][red]eset database[/] | Retrain A[cyan]I[/] model | Startup [cyan]P[/]arameters";
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
+				case Window.Operations:
+					subMenuText = "B[cyan]u[/]y | S[cyan]e[/]ll";
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
+				case Window.Balance:
+					contentList[Window.Balance] = CaptureAnsiConsoleMarkup(() =>
+					{
+						ShowBalance(_runtimeContext.CurrentPrices, true, true);
+					});
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
+				case Window.Statistics:
+					contentList[Window.Statistics] = CaptureAnsiConsoleMarkup(() =>
+					{
+						ShowDatabaseStats();
+					});
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
+				case Window.Transactions:
+
+					ClearContentArea();
+
+					var (sortColumn, sortOrder) = PromptForSortOptions();
+					bool showAllRecords = PromptForShowAllRecords();
+					int recordsPerPage = showAllRecords ? int.MaxValue : PromptForRecordsPerPage();
+
+					contentList[Window.Transactions] = CaptureAnsiConsoleMarkup(() =>
+					{
+						ShowTransactionHistory(sortColumn, sortOrder, showAllRecords, recordsPerPage);
+					});
+
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
+				default:
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+			}
+
+			Console.CursorVisible = false;
+		}
+
+		private void AddContentToExistingWindow(Window window, string[] newContent)
+		{
+			if (contentList.TryGetValue(window, out var existingContent))
+			{
+				contentList[window] = existingContent.Concat(newContent).ToArray();
+			}
+			else
+			{
+				contentList[window] = newContent;
+			}
+		}
+
+		private string[] CaptureAnsiConsoleMarkup(Action action)
+		{
+			using var writer = new StringWriter();
+			var console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(writer) });
+
+			console.Profile.Width = Console.WindowWidth > 100 ? 100 : Console.WindowWidth;
+			console.Profile.Height = Console.WindowHeight;
+
+			// Temporarily replace the global AnsiConsole with our custom console
+			var originalConsole = AnsiConsole.Console;
+			AnsiConsole.Console = console;
+
+			try
+			{
+				// Run the function using the custom console
+				action.Invoke();
+			}
+			finally
+			{
+				// Restore the original AnsiConsole
+				AnsiConsole.Console = originalConsole;
+			}
+
+			// Convert captured output to a string array
+			return writer.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+		}
+
+		private void DrawScrollableContent(Window window, bool forceRedraw = false)
+		{
+			if (contentList.TryGetValue(currentWindow, out string[]? content) && content != null)
+			{
+				if (!forceRedraw)
+				{
+					if (content.SequenceEqual(previousContent ?? new string[0]) && scrollPosition == previousScrollPosition)
+					{
+						// No need to redraw the content area
+						return;
+					}
+				}
+
+				ClearContentArea();
+				Console.CursorVisible = false;
+
+				if (content.Length == 0)
+				{
+					Console.SetCursorPosition(2, headerHeight);
+					AnsiConsole.MarkupLine("[red]No content available.[/]");
+					return;
+				}
+
+				int itemsToDisplay = Math.Min(visibleItems, content.Length);
+				int endPosition = Math.Min(scrollPosition + itemsToDisplay, content.Length);
+
+				for (int i = scrollPosition; i < endPosition; i++)
+				{
+					Console.SetCursorPosition(0, headerHeight + (i - scrollPosition));
+					AnsiConsole.WriteLine($"{content[i]}");
+				}
+
+				// Update previous content and scroll position
+				previousContent = content;
+				previousScrollPosition = scrollPosition;
+			}
+		}
+
+		private async Task UpdateInfo()
+		{
+			while (isRunning)
+			{
+				// Do update work here
+				await Task.Delay(100);
+			}
+		}
+
+		private void DrawHeader()
+		{
+			Console.SetCursorPosition(0, 0);
+			AnsiConsole.Write(
+				new Panel(
+						$"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis ({_runtimeContext.CurrentPeriodIndex}) | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold cyan]O[/]perations | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]\nSubmenu: {subMenuText}")
+					.Header("| [blue]Crypto Trading Bot[/] |")
+					.RoundedBorder()
+					.Expand()
+			);
+		}
+
+		private void DrawFooter()
+		{
+			Console.SetCursorPosition(0, Console.WindowHeight - footerHeight);
+			string scrollingHints = "Use Up/Down arrows, Page Up/Down, Home/End to scroll";
+			string footer = $"[white on blue]{scrollingHints} | [red]Q[/]uit | {footerText.PadRight(Console.WindowWidth - scrollingHints.Length - 7 - 3)}[/]";
+			AnsiConsole.Markup(footer);
+		}
+
+		private void SetFooterText(string text)
+		{
+			footerText = text;
+			DrawFooter();
 		}
 
 		private void HandleResize()
@@ -506,7 +697,7 @@ namespace Trader
 
 		private void PrintProgramParameters()
 		{
-			AnsiConsole.MarkupLine("\n[bold yellow]=== App Parameters ===[/]\n");
+			AnsiConsole.MarkupLine("\n[bold cyan]Startup Parameters[/]\n");
 
 			var table = new Table();
 			table.AddColumn(new TableColumn("[bold yellow]Parameter[/]").LeftAligned());
@@ -526,7 +717,7 @@ namespace Trader
 			table.AddRow("[bold cyan]Dollar cost averaging time interval (seconds)[/]", _settingsService.Settings.DollarCostAveragingSecondsInterval.ToString());
 
 			AnsiConsole.Write(table);
-			AnsiConsole.MarkupLine("\n[bold yellow]==========================[/]");
+
 		}
 
 		private void ResetDatabase()
@@ -541,15 +732,13 @@ namespace Trader
 			AnsiConsole.MarkupLine("[bold red]Database has been reset. Starting over...[/]");
 		}
 
-		private List<string> TrainAiModel(IMachineLearningService mlService)
+		private void TrainAiModel(IMachineLearningService mlService)
 		{
-			List<string> output = new List<string>();
-
-			output.Add("\n=== Train AI model... ===");
-
 			try
 			{
 				var historicalData = _databaseService.LoadHistoricalData();
+
+				AnsiConsole.MarkupLine($"> Training AI model. Please wait.");
 
 				// Prepare the training data
 				historicalData = historicalData.Where(h => !(h.RSI == 0 && h.EMA == 0 && h.SMA == 0 && h.MACD == 0)).ToList();
@@ -570,15 +759,12 @@ namespace Trader
 				mlService.TrainModel(trainingData);
 
 				mlService.SaveModel("model.zip");
-				output.Add("=== Model tained and saved successfully! ===");
+				AnsiConsole.MarkupLine($"[green]> Model trained and saved successfully![/]");
 			}
 			catch (Exception ex)
 			{
-				output.Add($"Error: {ex.Message}\n]");
-				output.Add("=== End of model train ===");
+				AnsiConsole.MarkupLine($"[red]> Error: {ex.Message}[/]");
 			}
-
-			return output;
 		}
 
 		private async Task<Dictionary<string, decimal>> GetCryptoPrices()
@@ -790,149 +976,7 @@ namespace Trader
 			AnsiConsole.Write(table);
 
 			AnsiConsole.MarkupLine("\n[bold yellow]=== End of backtest strategy analysis ===[/]");
-		}
-
-		private void SellCoinFromPortfolio()
-		{
-			if (_runtimeContext.Portfolio.Count == 0)
-			{
-				AnsiConsole.MarkupLine("[bold red]No coins in the portfolio to sell.[/]");
-				return;
-			}
-
-			var table = new Table();
-			table.AddColumn("Coin");
-			table.AddColumn("Units Held");
-			table.AddColumn("Current Price");
-			table.AddColumn("Current Value");
-			table.AddColumn("Gain/Loss");
-			table.AddColumn("Gain/Loss Including Fee");
-
-			foreach (var coin in _runtimeContext.Portfolio)
-			{
-				if (coin.Value > 0)
-				{
-					decimal currentPrice = _runtimeContext.CurrentPrices.ContainsKey(coin.Key) ? _runtimeContext.CurrentPrices[coin.Key] : 0;
-					decimal value = coin.Value * currentPrice;
-
-					// Calculate gain or loss
-					decimal averageCostBasis = _runtimeContext.TotalCostPerCoin[coin.Key] / _runtimeContext.TotalQuantityPerCoin[coin.Key];
-					decimal costOfHeldCoins = averageCostBasis * coin.Value;
-					decimal gainOrLoss = value - costOfHeldCoins;
-
-					// Calculate gain or loss including fee
-					decimal fee = value * _settingsService.Settings.TransactionFeeRate;
-					decimal gainOrLossIncludingFee = gainOrLoss - fee;
-
-					string gainOrLossStr = gainOrLoss >= 0 ? $"[green]{gainOrLoss:C}[/]" : $"[red]{gainOrLoss:C}[/]";
-					string gainOrLossIncludingFeeStr = gainOrLossIncludingFee >= 0 ? $"[green]{gainOrLossIncludingFee:C}[/]" : $"[red]{gainOrLossIncludingFee:C}[/]";
-
-					table.AddRow(
-						coin.Key.ToUpper(),
-						coin.Value.ToString("N4"),
-						currentPrice.ToString("C"),
-						value.ToString("C"),
-						gainOrLossStr,
-						gainOrLossIncludingFeeStr
-					);
-				}
-			}
-
-			AnsiConsole.Write(table);
-
-			var coinToSell = AnsiConsole.Prompt(
-				new SelectionPrompt<string>()
-					.Title("Select a coin to sell (or [bold red]Cancel[/]):")
-					.PageSize(10)
-					.AddChoices(_runtimeContext.Portfolio.Keys.Where(k => _runtimeContext.Portfolio[k] > 0).Append("Cancel").ToArray())
-			);
-
-			if (coinToSell == "Cancel")
-			{
-				AnsiConsole.MarkupLine("[bold yellow]Sell operation canceled.[/]");
-				return;
-			}
-
-			if (_runtimeContext.Portfolio.ContainsKey(coinToSell) && _runtimeContext.Portfolio[coinToSell] > 0)
-			{
-				decimal currentPrice = _runtimeContext.CurrentPrices[coinToSell];
-				decimal quantityToSell = _runtimeContext.Portfolio[coinToSell];
-				decimal totalValue = quantityToSell * currentPrice;
-
-				// Calculate gain or loss
-				decimal averageCostBasis = _runtimeContext.TotalCostPerCoin[coinToSell] / _runtimeContext.TotalQuantityPerCoin[coinToSell];
-				decimal costOfSoldCoins = averageCostBasis * quantityToSell;
-				decimal gainOrLoss = totalValue - costOfSoldCoins;
-
-				var sellResult = _tradeOperations.Sell(coinToSell, currentPrice);
-				foreach (var result in sellResult)
-				{
-					AnsiConsole.MarkupLine(result);
-				}
-			}
-			else
-			{
-				AnsiConsole.MarkupLine("[bold red]Invalid selection or no units to sell.[/]");
-			}
-		}
-
-		private void BuyCoin()
-		{
-			var availableCoins = _runtimeContext.CurrentPrices.Keys.ToList();
-
-			if (availableCoins.Count == 0)
-			{
-				AnsiConsole.MarkupLine("[bold red]No coins available to buy.[/]");
-				return;
-			}
-
-			var table = new Table();
-			table.AddColumn("Coin");
-			table.AddColumn("Current Price");
-
-			foreach (var coin in availableCoins)
-			{
-				decimal currentPrice = _runtimeContext.CurrentPrices[coin];
-				table.AddRow(coin.ToUpper(), currentPrice.ToString("C"));
-			}
-
-			AnsiConsole.Write(table);
-
-			var coinToBuy = AnsiConsole.Prompt(
-				new SelectionPrompt<string>()
-					.Title("Select a coin to buy (or [bold red]Cancel[/]):")
-					.PageSize(10)
-					.AddChoices(availableCoins.Append("Cancel").ToArray())
-			);
-
-			if (coinToBuy == "Cancel")
-			{
-				AnsiConsole.MarkupLine("[bold yellow]Buy operation canceled.[/]");
-				return;
-			}
-
-			decimal price = _runtimeContext.CurrentPrices[coinToBuy];
-			decimal quantityToBuy = AnsiConsole.Prompt(
-				new TextPrompt<decimal>($"Enter the quantity of {coinToBuy.ToUpper()} to buy (0 to cancel):")
-			);
-
-			if (quantityToBuy == 0) return;
-
-			decimal totalCost = quantityToBuy * price;
-
-			if (_runtimeContext.Balance >= totalCost)
-			{
-				var buyResult = _tradeOperations.Buy(coinToBuy, quantityToBuy, price);
-				foreach (var result in buyResult)
-				{
-					AnsiConsole.MarkupLine(result);
-				}
-			}
-			else
-			{
-				AnsiConsole.MarkupLine("[bold red]Insufficient balance to complete the purchase.[/]");
-			}
-		}
+		}		
 
 		private static (string column, string order) PromptForSortOptions()
 		{
@@ -1094,8 +1138,6 @@ namespace Trader
 
 		private void ShowBalance(Dictionary<string, decimal> prices, bool verbose = true, bool showTitle = true)
 		{
-			if (showTitle) AnsiConsole.MarkupLine($"\n[bold yellow]=== Balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]\n");
-
 			decimal portfolioWorth = 0;
 			decimal totalInvestment = 0;
 			decimal totalFees = _databaseService.CalculateTotalFees(); // Calculate total fees
@@ -1241,14 +1283,10 @@ namespace Trader
 
 				AnsiConsole.Write(portfolioTable);
 			}
-
-			if (showTitle) AnsiConsole.MarkupLine($"\n[bold yellow]=== End of balance{(verbose ? " and portfolio" : string.Empty)} Report ===[/]");
 		}
 
 		private void ShowDatabaseStats()
 		{
-			AnsiConsole.MarkupLine("\n[bold yellow]=== Database statistics ===[/]\n");
-
 			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
@@ -1337,7 +1375,6 @@ namespace Trader
 				decimal totalFees = _databaseService.CalculateTotalFees();
 				AnsiConsole.MarkupLine($"\n[bold yellow]Total Fees Incurred: [/][bold cyan]{totalFees:C}[/]");
 			}
-			AnsiConsole.MarkupLine("\n[bold yellow]=== End of Database statistics ===[/]");
 		}
 
 		private void AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds, bool analysisOnly)
