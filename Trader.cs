@@ -1,6 +1,7 @@
 using Spectre.Console;
 using System;
 using System.Collections.Generic;
+using System.Data.Entity.ModelConfiguration.Configuration;
 using System.Data.SqlClient;
 using System.Data.SQLite;
 using System.Diagnostics;
@@ -178,7 +179,7 @@ namespace Trader
 					{
 						var key = Console.ReadKey(intercept: true);
 
-						HandleInput(key.Key);
+						await HandleInput(key.Key);
 					}
 				}
 			}
@@ -284,7 +285,7 @@ namespace Trader
 			switch (window)
 			{
 				case Window.MainMenu:
-					subMenuText = "[red]R[/]eset database.";
+					subMenuText = "[red]R[/]eset database | Retrain A[cyan]I[/] model";
 					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 					break;
 
@@ -305,6 +306,9 @@ namespace Trader
 					break;
 
 				case Window.Transactions:
+
+					ClearContentArea();
+
 					var (sortColumn, sortOrder) = PromptForSortOptions();
 					bool showAllRecords = PromptForShowAllRecords();
 					int recordsPerPage = showAllRecords ? int.MaxValue : PromptForRecordsPerPage();
@@ -359,7 +363,7 @@ namespace Trader
 			DrawFooter();
 		}
 
-		private void HandleInput(ConsoleKey key)
+		private async Task HandleInput(ConsoleKey key)
 		{
 			if (key == ConsoleKey.DownArrow)
 			{
@@ -460,6 +464,26 @@ namespace Trader
 
 					DrawScrollableContent(Window.MainMenu, true);
 				}
+
+				if (key == ConsoleKey.I)
+				{
+					var trainModel = Task.Run(() =>
+					{
+						//string[] trainModelOutput = CaptureAnsiConsoleMarkup(() =>
+						//{
+						//TrainAiModel(_mlService);
+						//});
+
+						List<string> trainModelOutput = TrainAiModel(_mlService);
+						string[] strings = trainModelOutput.ToArray();
+
+						if (currentWindow == Window.MainMenu)
+						{
+							AddContentToExistingWindow(Window.MainMenu, strings);
+							DrawScrollableContent(Window.MainMenu, true);
+						}
+					});
+				}
 			}
 		}
 
@@ -535,9 +559,11 @@ namespace Trader
 			AnsiConsole.MarkupLine("[bold red]Database has been reset. Starting over...[/]");
 		}
 
-		private void TrainAiModel(IMachineLearningService mlService)
+		private List<string> TrainAiModel(IMachineLearningService mlService)
 		{
-			AnsiConsole.MarkupLine("[bold cyan]\n=== Train AI model... ===\n[/]");
+			List<string> output = new List<string>();
+
+			output.Add("[bold cyan]\n=== Train AI model... ===\n[/]");
 
 			try
 			{
@@ -562,13 +588,15 @@ namespace Trader
 				mlService.TrainModel(trainingData);
 
 				mlService.SaveModel("model.zip");
-				AnsiConsole.MarkupLine("[bold cyan]=== Model tained and saved successfully! ===[/]");
+				output.Add("[bold cyan]=== Model tained and saved successfully! ===[/]");
 			}
 			catch (Exception ex)
 			{
-				AnsiConsole.MarkupLine($"[bold red]Error: {ex.Message}\n[/]");
-				AnsiConsole.MarkupLine("[bold cyan]=== End of model train ===[/]");
+				output.Add($"[bold red]Error: {ex.Message}\n[/]");
+				output.Add("[bold cyan]=== End of model train ===[/]");
 			}
+
+			return output;
 		}
 
 		private async Task<Dictionary<string, decimal>> GetCryptoPrices()
