@@ -8,7 +8,7 @@ namespace trader.Services
 		public List<HistoricalData> LoadHistoricalData();
 		public void InitializeRuntimeContext();
 		public decimal CalculateTotalFees();
-		public List<(decimal Price, DateTime Timestamp)> GetRecentPrices(string coin, int rowCount);
+		public List<(decimal Price, DateTime Timestamp)> GetRecentPrices(string coin, int? rowCount);
 		public DateTime? GetLastPurchaseTime(string coin);
 		public void SaveDCAConfig(string coin, DateTime lastPurchaseTime);
 		public void SaveTrailingStopLoss(string coin, decimal stopLoss);

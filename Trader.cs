@@ -1,4 +1,4 @@
-using Microsoft.VisualBasic;
+﻿using Microsoft.VisualBasic;
 using Spectre.Console;
 using System;
 using System.Collections.Generic;
@@ -141,47 +141,26 @@ namespace Trader
 					{
 						lock (consoleLock)
 						{
-							/*
-							AddContentToExistingWindow(Window.LiveAnalysis, CaptureAnsiConsoleMarkup(() =>
-							{
-								prices = GetCryptoPrices().Result;
-								if (prices.Count != 0)
-								{
-									_databaseService.StoreIndicatorsInDatabase(prices);
-									var analyzerOperationsPerfomed = _analyzer.AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
-
-									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds)} seconds... ===[/]");
-
-									if (analyzerOperationsPerfomed.Count != 0)
-									{
-										string[] operations = analyzerOperationsPerfomed.ToArray();
-										AddContentToExistingWindow(Window.Operations, operations);
-									}
-								}
-							}));
-							*/
-
+							List<string> analyzerOperationsPerfomed = new List<string>();
 							string[] analyzerOutput = CaptureAnsiConsoleMarkup(() =>
 							{
 								prices = GetCryptoPrices().Result;
 								if (prices.Count != 0)
 								{
 									_databaseService.StoreIndicatorsInDatabase(prices);
-									var analyzerOperationsPerfomed = _analyzer.AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
+									 analyzerOperationsPerfomed = _analyzer.AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
 
 									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds)} seconds... ===[/]");
-
-									if (analyzerOperationsPerfomed.Count != 0)
-									{
-										string[] operations = analyzerOperationsPerfomed.ToArray();
-										AddContentToExistingWindow(Window.Operations, operations);
-									}
 								}
-
 							});
 
 							contentList[Window.LiveAnalysis] = analyzerOutput;
 							if (currentWindow == Window.LiveAnalysis) scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+
+							if (analyzerOperationsPerfomed.Count != 0)
+							{
+								AddContentToExistingWindow(Window.Operations, ConvertToMarkup(analyzerOperationsPerfomed));
+							}
 						}
 
 						// Update the next iteration time
@@ -362,6 +341,45 @@ namespace Trader
 						}
 					}
 				});
+			}
+
+			if(key == ConsoleKey.H)
+			{
+				var availableCoins = _runtimeContext.CurrentPrices.Keys.ToList();
+
+				if (availableCoins.Count == 0)
+				{
+					AnsiConsole.MarkupLine("[bold red]No coins available to buy.[/]");
+					DrawScrollableContent(Window.Operations, true, true);
+					return;
+				}
+
+				ClearContentArea();
+
+				var selectedCoin = AnsiConsole.Prompt(
+					new SelectionPrompt<string>()
+						.Title("Select a coin to display chart (or [bold red]Cancel[/]):")
+						.PageSize(10)
+						.AddChoices(availableCoins.Append("Cancel").ToArray())
+				);
+
+				if (selectedCoin == "Cancel")
+				{
+					AnsiConsole.MarkupLine("[bold yellow]Buy operation canceled.[/]");
+					DrawScrollableContent(Window.Operations, true, true);
+					return;
+				}
+
+				lock (consoleLock)
+				{
+					AddContentToExistingWindow(Window.MainMenu, new string[] { $"> Chart prices." });
+					AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
+					{
+						DisplayPriceChart(selectedCoin);
+					}));
+				}
+
+				DrawScrollableContent(Window.MainMenu, true, true);
 			}
 
 			if (key == ConsoleKey.P)
@@ -570,7 +588,7 @@ namespace Trader
 			switch (window)
 			{
 				case Window.MainMenu:
-					subMenuText = "[cyan]R[/][red]eset database[/] | Retrain A[cyan]I[/] model | Startup [cyan]P[/]arameters";
+					subMenuText = "[cyan]R[/][red]eset database[/] | Retrain A[cyan]I[/] model | Startup [cyan]P[/]arameters | Price [bold cyan]H[/]istory";
 					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 					break;
 
@@ -622,6 +640,17 @@ namespace Trader
 			}
 
 			Console.CursorVisible = false;
+		}
+
+		public string[] ConvertToMarkup(List<string> source)
+		{
+			return CaptureAnsiConsoleMarkup(() =>
+			{
+				foreach (var line in source)
+				{
+					AnsiConsole.MarkupLine(line);
+				}
+			});
 		}
 
 		private void AddContentToExistingWindow(Window window, string[] newContent)
@@ -716,7 +745,6 @@ namespace Trader
 				await Task.Delay(100);
 			}
 		}
-
 		private void DrawHeader()
 		{
 			Console.SetCursorPosition(0, 0);
@@ -728,7 +756,6 @@ namespace Trader
 					.Expand()
 			);
 		}
-
 		private void DrawFooter()
 		{
 			Console.SetCursorPosition(0, Console.WindowHeight - footerHeight);
@@ -764,6 +791,89 @@ namespace Trader
 				Console.Write(new string(' ', Console.WindowWidth));
 			}
 			Console.SetCursorPosition(0, headerHeight);
+		}
+
+		private void DisplayPriceChart(string coinName)
+		{
+			// Fetch historical data for the specified coin
+			var historicalData = _databaseService.GetRecentPrices(coinName, null);
+
+			if (historicalData == null || !historicalData.Any())
+			{
+				AnsiConsole.MarkupLine("[bold red]No historical data available for the specified coin.[/]");
+				return;
+			}
+
+			// Determine the minimum and maximum price for normalization
+			decimal minPrice = historicalData.Min(d => d.Price);
+			decimal maxPrice = historicalData.Max(d => d.Price);
+
+			// Limit the number of points to the console width
+			int maxPoints = Console.WindowWidth - 10; // Adjust for padding and labels
+			var limitedData = historicalData.TakeLast(maxPoints).ToList();
+
+			// Calculate the height of the chart
+			int maxItemHeight = (int)((maxPrice - minPrice) / (maxPrice - minPrice) * ((Console.WindowHeight - headerHeight - footerHeight - 5) / 2));
+			int chartHeight = maxItemHeight; // Console.WindowHeight - headerHeight - footerHeight - 5;
+
+			// Normalize the prices to fit within the chart height
+			var normalizedData = limitedData.Select(d => new
+			{
+				d.Timestamp,
+				d.Price,
+				NormalizedPrice = (int)((d.Price - minPrice) / (maxPrice - minPrice) * maxItemHeight)
+			}).ToList();
+
+			// Create a 2D array to represent the chart
+			char[,] chart = new char[chartHeight, limitedData.Count];
+
+			// Initialize the chart with spaces
+			for (int i = 0; i < chartHeight; i++)
+			{
+				for (int j = 0; j < limitedData.Count; j++)
+				{
+					chart[i, j] = ' ';
+				}
+			}
+
+			// Fill the chart with bars
+			for (int j = 0; j < normalizedData.Count; j++)
+			{
+				for (int i = 0; i < normalizedData[j].NormalizedPrice; i++)
+				{
+					chart[chartHeight - 1 - i, j] = '|';
+				}
+			}
+
+			// Display the chart
+			AnsiConsole.MarkupLine($"[green bold]{coinName} Prices[/]");
+			for (int i = 0; i < chartHeight; i++)
+			{
+				for (int j = 0; j < limitedData.Count; j++)
+				{
+					AnsiConsole.Write(chart[i, j]);
+				}
+				AnsiConsole.WriteLine();
+			}
+
+			// Display the first and last timestamps and prices at the bottom
+			if (limitedData.Count > 0)
+			{
+				string firstTimestamp = limitedData.First().Timestamp.ToString("g");
+				string lastTimestamp = limitedData.Last().Timestamp.ToString("g");
+				string firstPrice = limitedData.First().Price.ToString("F2");
+				string lastPrice = limitedData.Last().Price.ToString("F2");
+
+				int padding = Console.WindowWidth - lastTimestamp.Length - 1;
+				AnsiConsole.Write(firstTimestamp);
+				AnsiConsole.Write(new string(' ', padding - firstTimestamp.Length));
+				AnsiConsole.WriteLine(lastTimestamp);
+
+				padding = Console.WindowWidth - lastPrice.Length - 1;
+				AnsiConsole.Write(firstPrice);
+				AnsiConsole.Write(new string(' ', padding - firstPrice.Length));
+				AnsiConsole.WriteLine(lastPrice);
+			}
 		}
 
 		private void PrintProgramParameters()

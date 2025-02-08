@@ -94,17 +94,17 @@ namespace trader.Services
 			}
 		}
 
-		public List<(decimal Price, DateTime Timestamp)> GetRecentPrices(string coin, int rowCount)
+		public List<(decimal Price, DateTime Timestamp)> GetRecentPrices(string coin, int? rowCount)
 		{
 			var recentHistory = new List<(decimal Price, DateTime Timestamp)>();
 			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
 			{
 				conn.Open();
-				string query = @"
+				string query = @$"
 				SELECT price, timestamp FROM Prices
 				WHERE name = @name
 				ORDER BY timestamp DESC
-				LIMIT @rowCount;"; // Limit the number of rows returned
+				{(rowCount == null ? ";" : "LIMIT @rowCount;")}";
 				using (var cmd = new SQLiteCommand(query, conn))
 				{
 					cmd.Parameters.AddWithValue("@name", coin);
