@@ -1,6 +1,9 @@
 # Crypto Trading Bot
 
-Welcome to the Crypto Trading Bot! This bot is designed to automate cryptocurrency trading using various technical indicators and strategies.
+## Disclaimer
+**This project is a SIMULATOR and is not intended for real trading or financial advice. Use it at your own risk. It is not for real-life financial decisions.**
+
+Welcome to the Crypto Trading Bot! This bot is designed to **SIMULATE** automate cryptocurrency trading using various technical indicators and strategies.
 
 ## Overview
 The Trader application is designed to manage and analyze cryptocurrency trading data. It provides functionalities to track balances, cached prices, portfolio, initial investments, and more.
