@@ -30,15 +30,15 @@ namespace trader.Services
 			_runtimeContext = runtimeContext;
 		}
 
-		public void AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds, bool analysisOnly)
+		public List<string> AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds, bool analysisOnly)
 		{
 			DateTime startAnalysisTimeStamp = DateTime.Now.ToUniversalTime();
+
+			List<string> operationsPerformed = new List<string>();
 
 			if (!analysisOnly) _runtimeContext.CurrentPeriodIndex++;
 
 			AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Counter: {_runtimeContext.CurrentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
-
-			bool operationPerfomed = false;
 
 			foreach (var coin in prices)
 			{
@@ -139,11 +139,11 @@ namespace trader.Services
 				}
 
 				// Alert logic for ATR
-				decimal atrThreshold = 0.05m; // Example threshold for ATR
-				if (atr > atrThreshold)
-				{
-					table.AddRow("Alert", $"[bold red]{coin.Key.ToUpper()} ATR value is high, indicating high volatility![/]");
-				}
+				//decimal atrThreshold = 0.05m; // Example threshold for ATR
+				//if (atr > atrThreshold)
+				//{
+					//table.AddRow("Alert", $"[bold red]{coin.Key.ToUpper()} ATR value is high, indicating high volatility![/]");
+				//}
 
 				// Market sentiment analysis
 				string sentiment = "NEUTRAL";
@@ -190,23 +190,31 @@ namespace trader.Services
 
 						if (profitOrLoss <= adjustedStopLoss)
 						{
-							operationsTable.AddRow("STOP-LOSS", $"[bold red]Selling {coin.Key.ToUpper()} to prevent further loss.[/]");
+							string message = $"[bold red]Selling {coin.Key.ToUpper()} to prevent further loss.[/]Selling {coin.Key.ToUpper()} to prevent further loss.";
+
+							operationsPerformed.Add($"STOP-LOSS: {message}");
+							operationsTable.AddRow("STOP-LOSS", message);
+
 							var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
 							foreach (var result in sellResult)
 							{
+								operationsPerformed.Add($"STOP-LOSS: SELL Result: {result}");
 								operationsTable.AddRow("SELL Result", result);
 							}
-							operationPerfomed = true;
 						}
 						else if (profitOrLoss >= adjustedProfitTaking)
 						{
-							operationsTable.AddRow("PROFIT-TAKING", $"[bold green]Selling {coin.Key.ToUpper()} to secure profit.[/]");
+							string message = $"[bold green]Selling {coin.Key.ToUpper()} to secure profit.[/]";
+
+							operationsPerformed.Add($"PROFIT-TAKING: {message}");
+							operationsTable.AddRow("PROFIT-TAKING", message);
+
 							var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
 							foreach (var result in sellResult)
 							{
+								operationsPerformed.Add($"PROFIT-TAKING: SELL Result: {result}");
 								operationsTable.AddRow("SELL Result", result);
 							}
-							operationPerfomed = true;
 						}
 					}
 
@@ -215,21 +223,24 @@ namespace trader.Services
 					decimal trailingStopLoss = _databaseService.GetTrailingStopLoss(coin.Key) ?? decimal.MaxValue;
 					if (coin.Value <= trailingStopLoss)
 					{
-						operationsTable.AddRow("TRAILING STOP-LOSS", $"[bold red]Selling {coin.Key.ToUpper()} due to trailing stop-loss.[/]");
+						var message = $"[bold red]Selling {coin.Key.ToUpper()} due to trailing stop-loss.[/]";
+						
+						operationsPerformed.Add($"TRAILING STOP-LOSS: {message}");
+						operationsTable.AddRow("TRAILING STOP-LOSS", message);
 						var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
 						foreach (var result in sellResult)
 						{
+							operationsPerformed.Add($"TRAILING STOP-LOSS: SELL Result: {result}");
 							operationsTable.AddRow("SELL Result", result);
 						}
-						operationPerfomed = true;
 					}
 
 					// Dollar-Cost Averaging (DCA)
 					string[] dollarCostAveraging = ExecuteDCA(coin.Key, _settingsService.Settings.DollarCostAveragingAmount, coin.Value, TimeSpan.FromSeconds(_settingsService.Settings.DollarCostAveragingSecondsInterval));
 					foreach (var result in dollarCostAveraging)
 					{
+						operationsPerformed.Add($"DollarCostAveraging: {result}");
 						operationsTable.AddRow("DollarCostAveraging", result);
-						operationPerfomed = true;
 					}
 
 					// Trading signals with confidence levels
@@ -246,8 +257,8 @@ namespace trader.Services
 								foreach (var result in buyResult)
 								{
 									operationsTable.AddRow("BUY Result", result);
+									operationsPerformed.Add($"BUY Signal: {result}");
 								}
-								operationPerfomed = true;
 							}
 							else
 							{
@@ -277,9 +288,9 @@ namespace trader.Services
 							var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
 							foreach (var result in sellResult)
 							{
+								operationsPerformed.Add($"SELL Signal: {result}");
 								operationsTable.AddRow("SELL Result", result);
 							}
-							operationPerfomed = true;
 						}
 						else
 						{
@@ -295,6 +306,8 @@ namespace trader.Services
 			}
 
 			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Counter: {_runtimeContext.CurrentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
+
+			return operationsPerformed;
 		}
 
 		private void UpdateTrailingStopLoss(string coin, decimal currentPrice, decimal trailingPercentage)

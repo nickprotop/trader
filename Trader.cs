@@ -141,17 +141,47 @@ namespace Trader
 					{
 						lock (consoleLock)
 						{
+							/*
 							AddContentToExistingWindow(Window.LiveAnalysis, CaptureAnsiConsoleMarkup(() =>
 							{
 								prices = GetCryptoPrices().Result;
 								if (prices.Count != 0)
 								{
 									_databaseService.StoreIndicatorsInDatabase(prices);
-									_analyzer.AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
+									var analyzerOperationsPerfomed = _analyzer.AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
 
 									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds)} seconds... ===[/]");
+
+									if (analyzerOperationsPerfomed.Count != 0)
+									{
+										string[] operations = analyzerOperationsPerfomed.ToArray();
+										AddContentToExistingWindow(Window.Operations, operations);
+									}
 								}
 							}));
+							*/
+
+							string[] analyzerOutput = CaptureAnsiConsoleMarkup(() =>
+							{
+								prices = GetCryptoPrices().Result;
+								if (prices.Count != 0)
+								{
+									_databaseService.StoreIndicatorsInDatabase(prices);
+									var analyzerOperationsPerfomed = _analyzer.AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
+
+									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds)} seconds... ===[/]");
+
+									if (analyzerOperationsPerfomed.Count != 0)
+									{
+										string[] operations = analyzerOperationsPerfomed.ToArray();
+										AddContentToExistingWindow(Window.Operations, operations);
+									}
+								}
+
+							});
+
+							contentList[Window.LiveAnalysis] = analyzerOutput;
+							if (currentWindow == Window.LiveAnalysis) scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 						}
 
 						// Update the next iteration time
@@ -181,7 +211,7 @@ namespace Trader
 					{
 						var key = Console.ReadKey(intercept: true);
 
-						await HandleInput(key.Key);
+						HandleInput(key.Key);
 					}
 				}
 			}
@@ -192,326 +222,335 @@ namespace Trader
 			}
 		}
 
-		private async Task HandleInput(ConsoleKey key)
+		private void HandleInput(ConsoleKey key)
 		{
-			if (key == ConsoleKey.DownArrow)
+			bool handled = false;
+
+			switch (key)
 			{
-				if (scrollPosition < contentList[currentWindow].Length - visibleItems)
-				{
-					scrollPosition++;
-				}
-			}
-
-			if (key == ConsoleKey.UpArrow)
-			{
-				if (scrollPosition > 0)
-				{
-					scrollPosition--;
-				}
-			}
-
-			if (key == ConsoleKey.PageDown)
-			{
-				if (scrollPosition < contentList[currentWindow].Length - visibleItems)
-				{
-					scrollPosition = Math.Min(scrollPosition + visibleItems, contentList[currentWindow].Length - visibleItems);
-				}
-			}
-
-			if (key == ConsoleKey.PageUp)
-			{
-				if (scrollPosition > 0)
-				{
-					scrollPosition = Math.Max(scrollPosition - visibleItems, 0);
-				}
-			}
-
-			if (key == ConsoleKey.Home)
-			{
-				scrollPosition = 0;
-			}
-
-			if (key == ConsoleKey.End)
-			{
-				scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
-			}
-
-			if (key == ConsoleKey.M)
-			{
-				ActivateWindow(Window.MainMenu);
-			}
-
-			if (key == ConsoleKey.B)
-			{
-				ActivateWindow(Window.Balance);
-			}
-
-			if (key == ConsoleKey.S)
-			{
-				ActivateWindow(Window.Statistics);
-			}
-
-			if (key == ConsoleKey.A)
-			{
-				ActivateWindow(Window.LiveAnalysis);
-			}
-
-			if (key == ConsoleKey.T)
-			{
-				ActivateWindow(Window.Transactions);
-			}
-
-			if (key == ConsoleKey.Q)
-			{
-				AnsiConsole.Clear();
-
-				AnsiConsole.MarkupLine("[bold red]Exiting the program...[/]");
-				cancellationTokenSource.Cancel();
-				isRunning = false;
-			}
-
-			if (key == ConsoleKey.O)
-			{
-				ActivateWindow(Window.Operations);
-			}
-
-			if (currentWindow == Window.LiveAnalysis)
-			{
-				if (key == ConsoleKey.C)
-				{
-					_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis = !_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis;
-					subMenuText = $"[cyan]C[/]heck valid timeframe: {_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis.ToString()}";
-					DrawHeader();
-				}
-			}
-
-			if (currentWindow == Window.Operations)
-			{
-				if (key == ConsoleKey.U)
-				{
-					ClearContentArea();
-
-					var availableCoins = _runtimeContext.CurrentPrices.Keys.ToList();
-
-					if (availableCoins.Count == 0)
+				case ConsoleKey.DownArrow:
+					if (scrollPosition < contentList[currentWindow].Length - visibleItems)
 					{
-						AnsiConsole.MarkupLine("[bold red]No coins available to buy.[/]");
-						DrawScrollableContent(Window.Operations, true, true);
-						return;
+						scrollPosition++;
+						handled = true;
 					}
-
-					var table = new Table();
-					table.AddColumn("Coin");
-					table.AddColumn("Current Price");
-
-					foreach (var coin in availableCoins)
+					break;
+				case ConsoleKey.UpArrow:
+					if (scrollPosition > 0)
 					{
-						decimal currentPrice = _runtimeContext.CurrentPrices[coin];
-						table.AddRow(coin.ToUpper(), currentPrice.ToString("C"));
+						scrollPosition--;
+						handled = true;
 					}
-
-					AnsiConsole.Write(table);
-
-					var coinToBuy = AnsiConsole.Prompt(
-						new SelectionPrompt<string>()
-							.Title("Select a coin to buy (or [bold red]Cancel[/]):")
-							.PageSize(10)
-							.AddChoices(availableCoins.Append("Cancel").ToArray())
-					);
-
-					if (coinToBuy == "Cancel")
+					break;
+				case ConsoleKey.PageDown:
+					if (scrollPosition < contentList[currentWindow].Length - visibleItems)
 					{
-						AnsiConsole.MarkupLine("[bold yellow]Buy operation canceled.[/]");
-						DrawScrollableContent(Window.Operations, true, true);
-						return;
+						scrollPosition = Math.Min(scrollPosition + visibleItems, contentList[currentWindow].Length - visibleItems);
 					}
-
-					decimal price = _runtimeContext.CurrentPrices[coinToBuy];
-					decimal quantityToBuy = AnsiConsole.Prompt(
-						new TextPrompt<decimal>($"Enter the quantity of {coinToBuy.ToUpper()} to buy (0 to cancel):")
-					);
-
-					if (quantityToBuy == 0)
+					handled = true;
+					break;
+				case ConsoleKey.PageUp:
+					if (scrollPosition > 0)
 					{
-						DrawScrollableContent(Window.Operations, true, true);
-						return;
+						scrollPosition = Math.Max(scrollPosition - visibleItems, 0);
 					}
+					handled = true;
+					break;
+				case ConsoleKey.Home:
+					scrollPosition = 0;
+					handled = true;
+					break;
+				case ConsoleKey.End:
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					handled = true;
+					break;
+				case ConsoleKey.M:
+					ActivateWindow(Window.MainMenu);
+					handled = true;
+					break;
+				case ConsoleKey.B:
+					ActivateWindow(Window.Balance);
+					handled = true;
+					break;
+				case ConsoleKey.S:
+					ActivateWindow(Window.Statistics);
+					handled = true;
+					break;
+				case ConsoleKey.A:
+					ActivateWindow(Window.LiveAnalysis);
+					handled = true;
+					break;
+				case ConsoleKey.T:
+					ActivateWindow(Window.Transactions);
+					handled = true;
+					break;
+				case ConsoleKey.O:
+					ActivateWindow(Window.Operations);
+					handled = true;
+					break;
+				case ConsoleKey.Q:
+					AnsiConsole.Clear();
 
-					decimal totalCost = quantityToBuy * price;
+					AnsiConsole.MarkupLine("[bold red]Exiting the program...[/]");
+					cancellationTokenSource.Cancel();
+					isRunning = false;
+					handled = true;
+					break;
+			}
+			
+			if (!handled)
+			{
+				switch (currentWindow)
+				{
+					case Window.MainMenu:
+						HandleMainMenuKeyPress(key);
+						break;
+					case Window.LiveAnalysis:
+						HandleLiveAnalysisKeyPress(key);
+						break;
+					case Window.Operations:
+						HandleOperationsKeyPress(key);
+						break;
+				}
+			}
+		}
 
-					AddContentToExistingWindow(Window.Operations, CaptureAnsiConsoleMarkup(() =>
+		private void HandleMainMenuKeyPress(ConsoleKey key)
+		{
+			if (key == ConsoleKey.R)
+			{
+				ClearContentArea();
+
+				var prompt = AnsiConsole.Prompt(new SelectionPrompt<string>()
+				{
+					Title = "Reset database?",
+					PageSize = 10,
+					HighlightStyle = new Style(foreground: Color.Green)
+				}.AddChoices("Yes", "No"));
+
+				if (prompt == "Yes")
+				{
+					AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
 					{
-						if (_runtimeContext.Balance >= totalCost)
-						{
-							var buyResult = _tradeOperations.Buy(coinToBuy, quantityToBuy, price);
-							foreach (var result in buyResult)
-							{
-								AnsiConsole.MarkupLine(result);
-							}
-						}
-						else
-						{
-							AnsiConsole.MarkupLine("[bold red]Insufficient balance to complete the purchase.[/]");
-						}
+						ResetDatabase();
 					}));
-
-					DrawScrollableContent(Window.Operations, true, true);
 				}
 
-				if (key == ConsoleKey.E)
-				{
-					if (_runtimeContext.Portfolio.Count == 0)
-					{
-						AddContentToExistingWindow(Window.Operations, new string[] { "[bold red]No coins in the portfolio to sell.[/]" });
-						DrawScrollableContent(Window.Operations, true, true);
-						return;
-					}
-
-					ClearContentArea();
-
-					var table = new Table();
-					table.AddColumn("Coin");
-					table.AddColumn("Units Held");
-					table.AddColumn("Current Price");
-					table.AddColumn("Current Value");
-					table.AddColumn("Gain/Loss");
-					table.AddColumn("Gain/Loss Including Fee");
-
-					foreach (var coin in _runtimeContext.Portfolio)
-					{
-						if (coin.Value > 0)
-						{
-							decimal currentPrice = _runtimeContext.CurrentPrices.ContainsKey(coin.Key) ? _runtimeContext.CurrentPrices[coin.Key] : 0;
-							decimal value = coin.Value * currentPrice;
-
-							// Calculate gain or loss
-							decimal averageCostBasis = _runtimeContext.TotalCostPerCoin[coin.Key] / _runtimeContext.TotalQuantityPerCoin[coin.Key];
-							decimal costOfHeldCoins = averageCostBasis * coin.Value;
-							decimal gainOrLoss = value - costOfHeldCoins;
-
-							// Calculate gain or loss including fee
-							decimal fee = value * _settingsService.Settings.TransactionFeeRate;
-							decimal gainOrLossIncludingFee = gainOrLoss - fee;
-
-							string gainOrLossStr = gainOrLoss >= 0 ? $"[green]{gainOrLoss:C}[/]" : $"[red]{gainOrLoss:C}[/]";
-							string gainOrLossIncludingFeeStr = gainOrLossIncludingFee >= 0 ? $"[green]{gainOrLossIncludingFee:C}[/]" : $"[red]{gainOrLossIncludingFee:C}[/]";
-
-							table.AddRow(
-								coin.Key.ToUpper(),
-								coin.Value.ToString("N4"),
-								currentPrice.ToString("C"),
-								value.ToString("C"),
-								gainOrLossStr,
-								gainOrLossIncludingFeeStr
-							);
-						}
-					}
-
-					AnsiConsole.Write(table);
-
-					var coinToSell = AnsiConsole.Prompt(
-						new SelectionPrompt<string>()
-							.Title("Select a coin to sell (or [bold red]Cancel[/]):")
-							.PageSize(10)
-							.AddChoices(_runtimeContext.Portfolio.Keys.Where(k => _runtimeContext.Portfolio[k] > 0).Append("Cancel").ToArray())
-					);
-
-					if (coinToSell == "Cancel")
-					{
-						AnsiConsole.MarkupLine("[bold yellow]Sell operation canceled.[/]");
-						DrawScrollableContent(Window.Operations, true, true);
-						return;
-					}
-
-					AddContentToExistingWindow(Window.Operations, CaptureAnsiConsoleMarkup(() =>
-					{
-						if (_runtimeContext.Portfolio.ContainsKey(coinToSell) && _runtimeContext.Portfolio[coinToSell] > 0)
-						{
-							decimal currentPrice = _runtimeContext.CurrentPrices[coinToSell];
-							decimal quantityToSell = _runtimeContext.Portfolio[coinToSell];
-							decimal totalValue = quantityToSell * currentPrice;
-
-							// Calculate gain or loss
-							decimal averageCostBasis = _runtimeContext.TotalCostPerCoin[coinToSell] / _runtimeContext.TotalQuantityPerCoin[coinToSell];
-							decimal costOfSoldCoins = averageCostBasis * quantityToSell;
-							decimal gainOrLoss = totalValue - costOfSoldCoins;
-
-							var sellResult = _tradeOperations.Sell(coinToSell, currentPrice);
-							foreach (var result in sellResult)
-							{
-								AnsiConsole.MarkupLine(result);
-							}
-						}
-						else
-						{
-							AnsiConsole.MarkupLine("[bold red]Invalid selection or no units to sell.[/]");
-						}
-					}));
-
-					DrawScrollableContent(Window.Operations, true, true);
-				}
+				DrawScrollableContent(Window.MainMenu, true, true);
 			}
 
-			if (currentWindow == Window.MainMenu)
+			if (key == ConsoleKey.I)
 			{
-				if (key == ConsoleKey.R)
-				{
-					ClearContentArea();
-
-					var prompt = AnsiConsole.Prompt(new SelectionPrompt<string>()
-					{
-						Title = "Reset database?",
-						PageSize = 10,
-						HighlightStyle = new Style(foreground: Color.Green)
-					}.AddChoices("Yes", "No"));
-
-					if (prompt == "Yes")
-					{
-						AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
-						{
-							ResetDatabase();
-						}));
-					}
-
-					DrawScrollableContent(Window.MainMenu, true, true);
-				}
-
-				if (key == ConsoleKey.I)
-				{
-					var trainModel = Task.Run(() =>
-					{
-						lock (consoleLock)
-						{
-							AddContentToExistingWindow(Window.MainMenu, new string[] { $"> Training AI model. Please wait." });
-							if (currentWindow == Window.MainMenu)
-							{
-								DrawScrollableContent(Window.MainMenu, true, true);
-							}
-
-							AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
-							{
-								_mlService.TrainModel();
-							}));
-
-							if (currentWindow == Window.MainMenu)
-							{
-								DrawScrollableContent(Window.MainMenu, true, true);
-							}
-						}
-					});
-				}
-
-				if (key == ConsoleKey.P)
+				var trainModel = Task.Run(() =>
 				{
 					lock (consoleLock)
 					{
+						AddContentToExistingWindow(Window.MainMenu, new string[] { $"> Training AI model. Please wait." });
+						if (currentWindow == Window.MainMenu)
+						{
+							DrawScrollableContent(Window.MainMenu, true, true);
+						}
+
 						AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
 						{
-							PrintProgramParameters();
+							_mlService.TrainModel();
 						}));
-						scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+
+						if (currentWindow == Window.MainMenu)
+						{
+							DrawScrollableContent(Window.MainMenu, true, true);
+						}
+					}
+				});
+			}
+
+			if (key == ConsoleKey.P)
+			{
+				lock (consoleLock)
+				{
+					AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
+					{
+						PrintProgramParameters();
+					}));
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+				}
+			}
+		}
+
+		private void HandleOperationsKeyPress(ConsoleKey key)
+		{
+			if (key == ConsoleKey.U)
+			{
+				ClearContentArea();
+
+				var availableCoins = _runtimeContext.CurrentPrices.Keys.ToList();
+
+				if (availableCoins.Count == 0)
+				{
+					AnsiConsole.MarkupLine("[bold red]No coins available to buy.[/]");
+					DrawScrollableContent(Window.Operations, true, true);
+					return;
+				}
+
+				var table = new Table();
+				table.AddColumn("Coin");
+				table.AddColumn("Current Price");
+
+				foreach (var coin in availableCoins)
+				{
+					decimal currentPrice = _runtimeContext.CurrentPrices[coin];
+					table.AddRow(coin.ToUpper(), currentPrice.ToString("C"));
+				}
+
+				AnsiConsole.Write(table);
+
+				var coinToBuy = AnsiConsole.Prompt(
+					new SelectionPrompt<string>()
+						.Title("Select a coin to buy (or [bold red]Cancel[/]):")
+						.PageSize(10)
+						.AddChoices(availableCoins.Append("Cancel").ToArray())
+				);
+
+				if (coinToBuy == "Cancel")
+				{
+					AnsiConsole.MarkupLine("[bold yellow]Buy operation canceled.[/]");
+					DrawScrollableContent(Window.Operations, true, true);
+					return;
+				}
+
+				decimal price = _runtimeContext.CurrentPrices[coinToBuy];
+				decimal quantityToBuy = AnsiConsole.Prompt(
+					new TextPrompt<decimal>($"Enter the quantity of {coinToBuy.ToUpper()} to buy (0 to cancel):")
+				);
+
+				if (quantityToBuy == 0)
+				{
+					DrawScrollableContent(Window.Operations, true, true);
+					return;
+				}
+
+				decimal totalCost = quantityToBuy * price;
+
+				AddContentToExistingWindow(Window.Operations, CaptureAnsiConsoleMarkup(() =>
+				{
+					if (_runtimeContext.Balance >= totalCost)
+					{
+						var buyResult = _tradeOperations.Buy(coinToBuy, quantityToBuy, price);
+						foreach (var result in buyResult)
+						{
+							AnsiConsole.MarkupLine(result);
+						}
+					}
+					else
+					{
+						AnsiConsole.MarkupLine("[bold red]Insufficient balance to complete the purchase.[/]");
+					}
+				}));
+
+				DrawScrollableContent(Window.Operations, true, true);
+			}
+
+			if (key == ConsoleKey.E)
+			{
+				if (_runtimeContext.Portfolio.Count == 0)
+				{
+					AddContentToExistingWindow(Window.Operations, new string[] { "[bold red]No coins in the portfolio to sell.[/]" });
+					DrawScrollableContent(Window.Operations, true, true);
+					return;
+				}
+
+				ClearContentArea();
+
+				var table = new Table();
+				table.AddColumn("Coin");
+				table.AddColumn("Units Held");
+				table.AddColumn("Current Price");
+				table.AddColumn("Current Value");
+				table.AddColumn("Gain/Loss");
+				table.AddColumn("Gain/Loss Including Fee");
+
+				foreach (var coin in _runtimeContext.Portfolio)
+				{
+					if (coin.Value > 0)
+					{
+						decimal currentPrice = _runtimeContext.CurrentPrices.ContainsKey(coin.Key) ? _runtimeContext.CurrentPrices[coin.Key] : 0;
+						decimal value = coin.Value * currentPrice;
+
+						// Calculate gain or loss
+						decimal averageCostBasis = _runtimeContext.TotalCostPerCoin[coin.Key] / _runtimeContext.TotalQuantityPerCoin[coin.Key];
+						decimal costOfHeldCoins = averageCostBasis * coin.Value;
+						decimal gainOrLoss = value - costOfHeldCoins;
+
+						// Calculate gain or loss including fee
+						decimal fee = value * _settingsService.Settings.TransactionFeeRate;
+						decimal gainOrLossIncludingFee = gainOrLoss - fee;
+
+						string gainOrLossStr = gainOrLoss >= 0 ? $"[green]{gainOrLoss:C}[/]" : $"[red]{gainOrLoss:C}[/]";
+						string gainOrLossIncludingFeeStr = gainOrLossIncludingFee >= 0 ? $"[green]{gainOrLossIncludingFee:C}[/]" : $"[red]{gainOrLossIncludingFee:C}[/]";
+
+						table.AddRow(
+							coin.Key.ToUpper(),
+							coin.Value.ToString("N4"),
+							currentPrice.ToString("C"),
+							value.ToString("C"),
+							gainOrLossStr,
+							gainOrLossIncludingFeeStr
+						);
 					}
 				}
+
+				AnsiConsole.Write(table);
+
+				var coinToSell = AnsiConsole.Prompt(
+					new SelectionPrompt<string>()
+						.Title("Select a coin to sell (or [bold red]Cancel[/]):")
+						.PageSize(10)
+						.AddChoices(_runtimeContext.Portfolio.Keys.Where(k => _runtimeContext.Portfolio[k] > 0).Append("Cancel").ToArray())
+				);
+
+				if (coinToSell == "Cancel")
+				{
+					AnsiConsole.MarkupLine("[bold yellow]Sell operation canceled.[/]");
+					DrawScrollableContent(Window.Operations, true, true);
+					return;
+				}
+
+				AddContentToExistingWindow(Window.Operations, CaptureAnsiConsoleMarkup(() =>
+				{
+					if (_runtimeContext.Portfolio.ContainsKey(coinToSell) && _runtimeContext.Portfolio[coinToSell] > 0)
+					{
+						decimal currentPrice = _runtimeContext.CurrentPrices[coinToSell];
+						decimal quantityToSell = _runtimeContext.Portfolio[coinToSell];
+						decimal totalValue = quantityToSell * currentPrice;
+
+						// Calculate gain or loss
+						decimal averageCostBasis = _runtimeContext.TotalCostPerCoin[coinToSell] / _runtimeContext.TotalQuantityPerCoin[coinToSell];
+						decimal costOfSoldCoins = averageCostBasis * quantityToSell;
+						decimal gainOrLoss = totalValue - costOfSoldCoins;
+
+						var sellResult = _tradeOperations.Sell(coinToSell, currentPrice);
+						foreach (var result in sellResult)
+						{
+							AnsiConsole.MarkupLine(result);
+						}
+					}
+					else
+					{
+						AnsiConsole.MarkupLine("[bold red]Invalid selection or no units to sell.[/]");
+					}
+				}));
+
+				DrawScrollableContent(Window.Operations, true, true);
+			}
+		}
+
+		private void HandleLiveAnalysisKeyPress(ConsoleKey key)
+		{
+			if (key == ConsoleKey.C)
+			{
+				_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis = !_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis;
+				subMenuText = $"[cyan]C[/]heck valid timeframe: {_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis.ToString()}";
+				DrawHeader();
 			}
 		}
 
