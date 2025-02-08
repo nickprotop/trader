@@ -1,7 +1,9 @@
 # Crypto Trading Bot
 
 ## Disclaimer
+:warning:
 **This project is a SIMULATOR and is not intended for real trading or financial advice. Use it at your own risk. It is not for real-life financial decisions.**
+:warning:
 
 ## Overview
 A simple project, for **educational purposes**, that simulates a cryptocurrency trading bot.
