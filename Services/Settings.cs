@@ -14,5 +14,6 @@ namespace trader.Services
 		public decimal TrailingStopLossPercentage { get; set; } = 0.05m;
 		public decimal DollarCostAveragingAmount { get; set; } = 100m;
 		public int DollarCostAveragingSecondsInterval { get; set; } = 60 * 60 * 3;
+		public bool CheckForValidTimeIntervalToPerformAnalysis { get; set; } = true;
 	}
 }

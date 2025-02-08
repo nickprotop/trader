@@ -275,6 +275,16 @@ namespace Trader
 				ActivateWindow(Window.Operations);
 			}
 
+			if (currentWindow == Window.LiveAnalysis)
+			{
+				if (key == ConsoleKey.C)
+				{
+					_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis = !_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis;
+					subMenuText = $"[cyan]C[/]heck valid timeframe: {_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis.ToString()}";
+					DrawHeader();
+				}
+			}
+
 			if (currentWindow == Window.Operations)
 			{
 				if (key == ConsoleKey.U)
@@ -522,6 +532,11 @@ namespace Trader
 			{
 				case Window.MainMenu:
 					subMenuText = "[cyan]R[/][red]eset database[/] | Retrain A[cyan]I[/] model | Startup [cyan]P[/]arameters";
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
+				case Window.LiveAnalysis:
+					subMenuText = $"[cyan]C[/]heck valid timeframe: {_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis.ToString()}";
 					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 					break;
 

@@ -9,7 +9,6 @@
 		public Dictionary<string, decimal> TotalQuantityPerCoin { get; set; } = new Dictionary<string, decimal>();
 		public Dictionary<string, decimal> TotalCostPerCoin { get; set; } = new Dictionary<string, decimal>();
 		public Dictionary<string, decimal> CurrentPrices { get; set; } = new Dictionary<string, decimal>();
-		public bool CheckForValidTimeInterval { get; set; } = true;
 		public int CurrentPeriodIndex { get; set; } = 0;
 	}
 }

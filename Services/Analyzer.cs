@@ -74,7 +74,7 @@ namespace trader.Services
 				DateTime earliestTimestamp = recentHistoryData.First().Timestamp;
 				TimeSpan timeframe = DateTime.UtcNow - earliestTimestamp;
 
-				if (_runtimeContext.CheckForValidTimeInterval)
+				if (_settingsService.Settings.CheckForValidTimeIntervalToPerformAnalysis)
 				{
 					int bufferSeconds = _settingsService.Settings.CustomIntervalSeconds * 2; // Buffer for capture delays
 					if (timeframe.TotalSeconds < (analysisWindowSeconds - bufferSeconds) || timeframe.TotalSeconds > (analysisWindowSeconds + bufferSeconds))
@@ -258,6 +258,18 @@ namespace trader.Services
 					else if (rsi > 70 && _runtimeContext.Portfolio.ContainsKey(coin.Key) && _runtimeContext.Portfolio[coin.Key] > 0 && coin.Value > sma && coin.Value > ema && macd > 0 && coin.Value > upperBand && atr > 0)
 					{
 						decimal confidence = (rsi - 70) / 30 * 100;
+
+						decimal initialInvestment = _runtimeContext.InitialInvestments.ContainsKey(coin.Key) ? _runtimeContext.InitialInvestments[coin.Key] : 0;
+						decimal currentValue = _runtimeContext.Portfolio[coin.Key] * coin.Value;
+						decimal fee = currentValue * _settingsService.Settings.TransactionFeeRate;
+						decimal profitOrLoss = (currentValue - initialInvestment - fee) / initialInvestment;
+
+						if (profitOrLoss <= 0 && confidence < 90)
+						{
+							operationsTable.AddRow("SELL Signal", $"[bold red]Prevent sell because of loss and Confidence < 90% ({confidence:N2}%)[/]");
+							continue;
+						}
+
 						operationsTable.AddRow("SELL Signal", $"[bold cyan]Confidence: {confidence:N2}%[/]");
 
 						if (operationsAllowed)
