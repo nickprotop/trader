@@ -23,6 +23,7 @@ namespace Trader
 		private readonly IDatabaseService _databaseService;
 		private readonly ISettingsService _settingsService;
 		private readonly RuntimeContext _runtimeContext;
+		private readonly IAnalyzer _analyzer;
 		private readonly HttpClient httpClient = new HttpClient();
 
 		private bool isRunning = true;
@@ -57,12 +58,14 @@ namespace Trader
 		{ MainMenu, LiveAnalysis, Balance, Transactions, Statistics, Operations }
 
 		public Trader(
+			IAnalyzer analyzer,
 			ITradeOperations tradeOperations,
 			IMachineLearningService mlService,
 			IDatabaseService databaseService,
 			ISettingsService settingsService,
 			RuntimeContext runtimeContext)
 		{
+			_analyzer = analyzer;
 			_tradeOperations = tradeOperations;
 			_mlService = mlService;
 			_databaseService = databaseService;
@@ -124,7 +127,7 @@ namespace Trader
 				}
 				else
 				{
-					TrainAiModel(_mlService);
+					_mlService.TrainModel();
 				}
 			});
 
@@ -143,8 +146,8 @@ namespace Trader
 								prices = GetCryptoPrices().Result;
 								if (prices.Count != 0)
 								{
-									StoreIndicatorsInDatabase(prices);
-									AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
+									_databaseService.StoreIndicatorsInDatabase(prices);
+									_analyzer.AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
 
 									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds)} seconds... ===[/]");
 								}
@@ -283,7 +286,7 @@ namespace Trader
 					if (availableCoins.Count == 0)
 					{
 						AnsiConsole.MarkupLine("[bold red]No coins available to buy.[/]");
-						DrawScrollableContent(Window.Operations, true);
+						DrawScrollableContent(Window.Operations, true, true);
 						return;
 					}
 
@@ -309,7 +312,7 @@ namespace Trader
 					if (coinToBuy == "Cancel")
 					{
 						AnsiConsole.MarkupLine("[bold yellow]Buy operation canceled.[/]");
-						DrawScrollableContent(Window.Operations, true);
+						DrawScrollableContent(Window.Operations, true, true);
 						return;
 					}
 
@@ -320,7 +323,7 @@ namespace Trader
 
 					if (quantityToBuy == 0)
 					{
-						DrawScrollableContent(Window.Operations, true);
+						DrawScrollableContent(Window.Operations, true, true);
 						return;
 					}
 
@@ -342,7 +345,7 @@ namespace Trader
 						}
 					}));
 
-					DrawScrollableContent(Window.Operations, true);
+					DrawScrollableContent(Window.Operations, true, true);
 				}
 
 				if (key == ConsoleKey.E)
@@ -350,7 +353,7 @@ namespace Trader
 					if (_runtimeContext.Portfolio.Count == 0)
 					{
 						AddContentToExistingWindow(Window.Operations, new string[] { "[bold red]No coins in the portfolio to sell.[/]" });
-						DrawScrollableContent(Window.Operations, true);
+						DrawScrollableContent(Window.Operations, true, true);
 						return;
 					}
 
@@ -406,7 +409,7 @@ namespace Trader
 					if (coinToSell == "Cancel")
 					{
 						AnsiConsole.MarkupLine("[bold yellow]Sell operation canceled.[/]");
-						DrawScrollableContent(Window.Operations, true);
+						DrawScrollableContent(Window.Operations, true, true);
 						return;
 					}
 
@@ -435,7 +438,7 @@ namespace Trader
 						}
 					}));
 
-					DrawScrollableContent(Window.Operations, true);
+					DrawScrollableContent(Window.Operations, true, true);
 				}
 			}
 
@@ -460,7 +463,7 @@ namespace Trader
 						}));
 					}
 
-					DrawScrollableContent(Window.MainMenu, true);
+					DrawScrollableContent(Window.MainMenu, true, true);
 				}
 
 				if (key == ConsoleKey.I)
@@ -469,14 +472,20 @@ namespace Trader
 					{
 						lock (consoleLock)
 						{
+							AddContentToExistingWindow(Window.MainMenu, new string[] { $"> Training AI model. Please wait." });
+							if (currentWindow == Window.MainMenu)
+							{
+								DrawScrollableContent(Window.MainMenu, true, true);
+							}
+
 							AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
 							{
-								TrainAiModel(_mlService);
+								_mlService.TrainModel();
 							}));
 
 							if (currentWindow == Window.MainMenu)
 							{
-								DrawScrollableContent(Window.MainMenu, true);
+								DrawScrollableContent(Window.MainMenu, true, true);
 							}
 						}
 					});
@@ -490,6 +499,7 @@ namespace Trader
 						{
 							PrintProgramParameters();
 						}));
+						scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 					}
 				}
 			}
@@ -570,6 +580,11 @@ namespace Trader
 			{
 				contentList[window] = newContent;
 			}
+
+			if (currentWindow == window)
+			{
+				DrawScrollableContent(window, true, true);
+			}			
 		}
 
 		private string[] CaptureAnsiConsoleMarkup(Action action)
@@ -599,7 +614,7 @@ namespace Trader
 			return writer.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
 		}
 
-		private void DrawScrollableContent(Window window, bool forceRedraw = false)
+		private void DrawScrollableContent(Window window, bool forceRedraw = false, bool scrollToButton = false)
 		{
 			if (contentList.TryGetValue(currentWindow, out string[]? content) && content != null)
 			{
@@ -614,6 +629,8 @@ namespace Trader
 
 				ClearContentArea();
 				Console.CursorVisible = false;
+
+				if (scrollToButton) scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 
 				if (content.Length == 0)
 				{
@@ -687,7 +704,7 @@ namespace Trader
 
 		private void ClearContentArea()
 		{
-			for (int i = headerHeight; i < Console.WindowHeight; i++)
+			for (int i = headerHeight; i < Console.WindowHeight - footerHeight; i++)
 			{
 				Console.SetCursorPosition(0, i);
 				Console.Write(new string(' ', Console.WindowWidth));
@@ -717,7 +734,6 @@ namespace Trader
 			table.AddRow("[bold cyan]Dollar cost averaging time interval (seconds)[/]", _settingsService.Settings.DollarCostAveragingSecondsInterval.ToString());
 
 			AnsiConsole.Write(table);
-
 		}
 
 		private void ResetDatabase()
@@ -730,41 +746,6 @@ namespace Trader
 			_databaseService.InitializeRuntimeContext();
 
 			AnsiConsole.MarkupLine("[bold red]Database has been reset. Starting over...[/]");
-		}
-
-		private void TrainAiModel(IMachineLearningService mlService)
-		{
-			try
-			{
-				var historicalData = _databaseService.LoadHistoricalData();
-
-				AnsiConsole.MarkupLine($"> Training AI model. Please wait.");
-
-				// Prepare the training data
-				historicalData = historicalData.Where(h => !(h.RSI == 0 && h.EMA == 0 && h.SMA == 0 && h.MACD == 0)).ToList();
-
-				var trainingData = historicalData.Select(h => new CryptoData
-				{
-					Price = (float)h.Price,
-					SMA = (float)h.SMA,
-					EMA = (float)h.EMA,
-					RSI = (float)h.RSI,
-					MACD = (float)h.MACD,
-					BollingerUpper = (float)h.BollingerUpper,
-					BollingerLower = (float)h.BollingerLower,
-					ATR = (float)h.ATR,
-					Volatility = (float)h.Volatility,
-					Label = (float)h.Price
-				}).ToList();
-				mlService.TrainModel(trainingData);
-
-				mlService.SaveModel("model.zip");
-				AnsiConsole.MarkupLine($"[green]> Model trained and saved successfully![/]");
-			}
-			catch (Exception ex)
-			{
-				AnsiConsole.MarkupLine($"[red]> Error: {ex.Message}[/]");
-			}
 		}
 
 		private async Task<Dictionary<string, decimal>> GetCryptoPrices()
@@ -798,185 +779,6 @@ namespace Trader
 				return new Dictionary<string, decimal>();
 			}
 		}
-
-		private void StoreIndicatorsInDatabase(Dictionary<string, decimal> prices)
-		{
-			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
-			{
-				conn.Open();
-				foreach (var coin in prices)
-				{
-					var recentHistory = _databaseService.GetRecentPrices(coin.Key, 60);
-
-					List<decimal> recentPrices = recentHistory.Select(pt => pt.Price).ToList();
-
-					decimal rsi = IndicatorCalculations.CalculateRSI(recentPrices, recentHistory.Count);
-					decimal sma = IndicatorCalculations.CalculateSMA(recentPrices, recentHistory.Count);
-					decimal ema = IndicatorCalculations.CalculateEMASingle(recentPrices, recentHistory.Count);
-					var (macd, _, _, _) = IndicatorCalculations.CalculateMACD(recentPrices);
-					var (bollingerUpper, bollingerLower, _) = IndicatorCalculations.CalculateBollingerBands(recentPrices, recentPrices.Count);
-					decimal atr = IndicatorCalculations.CalculateATR(recentPrices, recentPrices.Count);
-					decimal volatility = IndicatorCalculations.CalculateVolatility(recentPrices, recentPrices.Count);
-
-					string insertQuery = @"
-					INSERT INTO Prices (name, price, rsi, sma, ema, macd, bollingerUpper, bollingerLower, atr, volatility)
-					VALUES (@name, @price, @rsi, @sma, @ema, @macd, @bollingerUpper, @bollingerLower, @atr, @volatility);";
-					using (var cmd = new SQLiteCommand(insertQuery, conn))
-					{
-						cmd.Parameters.AddWithValue("@name", coin.Key);
-						cmd.Parameters.AddWithValue("@price", coin.Value);
-						cmd.Parameters.AddWithValue("@rsi", rsi);
-						cmd.Parameters.AddWithValue("@sma", sma);
-						cmd.Parameters.AddWithValue("@ema", ema);
-						cmd.Parameters.AddWithValue("@macd", macd);
-						cmd.Parameters.AddWithValue("@bollingerUpper", bollingerUpper);
-						cmd.Parameters.AddWithValue("@bollingerLower", bollingerLower);
-						cmd.Parameters.AddWithValue("@atr", atr);
-						cmd.Parameters.AddWithValue("@volatility", volatility);
-						cmd.ExecuteNonQuery();
-					}
-				}
-			}
-		}
-
-		private void BacktestStrategy(List<HistoricalData> historicalData)
-		{
-			AnsiConsole.MarkupLine("\n[bold yellow]=== Backtest strategy analysis ===[/]\n");
-
-			decimal initialBalance = _settingsService.Settings.StartingBalance;
-			decimal balance = initialBalance;
-			decimal portfolioValue = 0;
-			decimal totalProfitOrLoss = 0;
-
-			Dictionary<string, decimal> portfolio = new Dictionary<string, decimal>();
-			Dictionary<string, decimal> initialInvestments = new Dictionary<string, decimal>();
-			Dictionary<string, decimal> totalQuantityPerCoin = new Dictionary<string, decimal>();
-			Dictionary<string, decimal> totalCostPerCoin = new Dictionary<string, decimal>();
-
-			var groupedData = historicalData.GroupBy(h => h.Name).ToDictionary(g => g.Key, g => g.OrderBy(h => h.Timestamp).ToList());
-
-			foreach (var coinData in groupedData)
-			{
-				string coinName = coinData.Key;
-				List<HistoricalData> coinHistory = coinData.Value;
-
-				for (int i = _settingsService.Settings.CustomPeriods; i < coinHistory.Count; i++)
-				{
-					var recentHistory = coinHistory.Skip(i - _settingsService.Settings.CustomPeriods).Take(_settingsService.Settings.CustomPeriods).Select(h => h.Price).ToList();
-					var data = coinHistory[i];
-
-					decimal rsi = IndicatorCalculations.CalculateRSI(recentHistory, recentHistory.Count);
-					decimal sma = IndicatorCalculations.CalculateSMA(recentHistory, recentHistory.Count);
-					decimal ema = IndicatorCalculations.CalculateEMASingle(recentHistory, recentHistory.Count);
-					var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = IndicatorCalculations.CalculateMACD(recentHistory);
-					decimal priceChangeWindow = IndicatorCalculations.CalculatePriceChange(recentHistory);
-
-					// Calculate Bollinger Bands
-					var (middleBand, upperBand, lowerBand) = IndicatorCalculations.CalculateBollingerBands(recentHistory, _settingsService.Settings.CustomPeriods);
-
-					// Calculate ATR (assuming high, low, and close prices are available)
-					decimal atr = IndicatorCalculations.CalculateATR(recentHistory, recentHistory.Count);
-
-					// Calculate volatility
-					decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, _settingsService.Settings.CustomPeriods);
-					var (adjustedStopLoss, adjustedProfitTaking) = AdjustThresholdsBasedOnVolatility(volatility);
-
-					// Trading signals
-					if (rsi < 30 && data.Price < sma && data.Price < ema && macd < 0 && data.Price < lowerBand && atr > 0)
-					{
-						// Buy signal
-						decimal quantity = balance / data.Price;
-						decimal cost = quantity * data.Price;
-						decimal fee = cost * _settingsService.Settings.TransactionFeeRate;
-						decimal totalCost = cost + fee;
-
-						if (balance >= totalCost)
-						{
-							balance -= totalCost;
-
-							// Update portfolio
-							if (portfolio.ContainsKey(coinName))
-								portfolio[coinName] += quantity;
-							else
-								portfolio[coinName] = quantity;
-
-							// Update initial investments
-							if (initialInvestments.ContainsKey(coinName))
-								initialInvestments[coinName] += cost;
-							else
-								initialInvestments[coinName] = cost;
-
-							// Update total quantity and cost for cost basis calculation
-							if (totalQuantityPerCoin.ContainsKey(coinName))
-							{
-								totalQuantityPerCoin[coinName] += quantity;
-								totalCostPerCoin[coinName] += cost;
-							}
-							else
-							{
-								totalQuantityPerCoin[coinName] = quantity;
-								totalCostPerCoin[coinName] = cost;
-							}
-						}
-					}
-					else if (rsi > 70 && portfolio.ContainsKey(coinName) && portfolio[coinName] > 0 && data.Price > sma && data.Price > ema && macd > 0 && data.Price > upperBand && atr > 0)
-					{
-						// Sell signal
-						decimal quantityToSell = portfolio[coinName];
-						decimal amountToSell = quantityToSell * data.Price;
-						decimal fee = amountToSell * _settingsService.Settings.TransactionFeeRate;
-						decimal netAmountToSell = amountToSell - fee;
-
-						// Calculate average cost basis
-						decimal averageCostBasis = totalCostPerCoin[coinName] / totalQuantityPerCoin[coinName];
-						decimal costOfSoldCoins = averageCostBasis * quantityToSell;
-
-						// Calculate gain or loss
-						decimal gainOrLoss = netAmountToSell - costOfSoldCoins;
-
-						// Update balance and portfolio
-						balance += netAmountToSell;
-						portfolio[coinName] = 0;
-
-						// Update total quantity and cost
-						totalQuantityPerCoin[coinName] -= quantityToSell;
-						totalCostPerCoin[coinName] -= costOfSoldCoins;
-
-						// Adjust initial investments
-						if (initialInvestments.ContainsKey(coinName))
-						{
-							initialInvestments[coinName] -= costOfSoldCoins;
-							if (initialInvestments[coinName] <= 0)
-							{
-								initialInvestments.Remove(coinName);
-							}
-						}
-
-						totalProfitOrLoss += gainOrLoss;
-					}
-
-					// Update portfolio value
-					portfolioValue = portfolio.Sum(p => p.Value * data.Price);
-				}
-			}
-
-			decimal finalBalance = balance + portfolioValue;
-			decimal totalReturn = (finalBalance - initialBalance) / initialBalance * 100;
-
-			// Create a table for backtest results
-			var table = new Table();
-			table.AddColumn("Metric");
-			table.AddColumn("Value");
-
-			table.AddRow("Initial Balance", $"{initialBalance:C}");
-			table.AddRow("Final Balance", $"{finalBalance:C}");
-			table.AddRow("Total Return", $"{totalReturn:N2}%");
-			table.AddRow("Total Profit/Loss", $"{totalProfitOrLoss:C}");
-
-			AnsiConsole.Write(table);
-
-			AnsiConsole.MarkupLine("\n[bold yellow]=== End of backtest strategy analysis ===[/]");
-		}		
 
 		private static (string column, string order) PromptForSortOptions()
 		{
@@ -1375,312 +1177,6 @@ namespace Trader
 				decimal totalFees = _databaseService.CalculateTotalFees();
 				AnsiConsole.MarkupLine($"\n[bold yellow]Total Fees Incurred: [/][bold cyan]{totalFees:C}[/]");
 			}
-		}
-
-		private void AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds, bool analysisOnly)
-		{
-			DateTime startAnalysisTimeStamp = DateTime.Now.ToUniversalTime();
-
-			if (!analysisOnly) _runtimeContext.CurrentPeriodIndex++;
-
-			AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Counter: {_runtimeContext.CurrentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
-
-			bool operationPerfomed = false;
-
-			foreach (var coin in prices)
-			{
-				bool operationsAllowed = true;
-
-				AnsiConsole.MarkupLine($"\n[bold cyan]{coin.Key.ToUpper()}[/]:");
-
-				if (!_runtimeContext.CachedPrices.ContainsKey(coin.Key))
-					continue;
-
-				var recentHistoryData = _databaseService.GetRecentPrices(coin.Key, _settingsService.Settings.CustomPeriods);
-
-				var table = new Table();
-				table.AddColumn("Indicator");
-				table.AddColumn("Value");
-
-				if (recentHistoryData.Count < 2) // Need at least 2 data points to calculate change
-				{
-					table.AddRow("Analysis Status", $"[bold red]Insufficient data points for {coin.Key} analysis.[/]");
-					AnsiConsole.Write(table);
-					continue;
-				}
-
-				var recentHistory = recentHistoryData.Select(x => x.Price).ToList();
-
-				if (recentHistory.Count < customPeriods)
-				{
-					table.AddRow("Analysis Status", $"[bold red]Insufficient data points for {coin.Key} analysis.[/]");
-					operationsAllowed = false;
-				}
-
-				// Check if the timeframe is suitable for analysis
-				DateTime earliestTimestamp = recentHistoryData.First().Timestamp;
-				TimeSpan timeframe = DateTime.UtcNow - earliestTimestamp;
-
-				if (_runtimeContext.CheckForValidTimeInterval)
-				{
-					int bufferSeconds = _settingsService.Settings.CustomIntervalSeconds * 2; // Buffer for capture delays
-					if (timeframe.TotalSeconds < (analysisWindowSeconds - bufferSeconds) || timeframe.TotalSeconds > (analysisWindowSeconds + bufferSeconds))
-					{
-						table.AddRow("Analysis Status", $"[bold red]Not valid timeframe for {coin.Key} analysis. Required: {analysisWindowSeconds} seconds, Available: {timeframe.TotalSeconds} seconds (including buffer of {bufferSeconds} seconds).[/]");
-						AnsiConsole.Write(table);
-						continue;
-					}
-				}
-
-				decimal rsi = IndicatorCalculations.CalculateRSI(recentHistory, recentHistory.Count);
-				decimal sma = IndicatorCalculations.CalculateSMA(recentHistory, recentHistory.Count);
-				decimal ema = IndicatorCalculations.CalculateEMASingle(recentHistory, recentHistory.Count);
-				var (macd, bestShortPeriod, bestLongPeriod, bestSignalPeriod) = IndicatorCalculations.CalculateMACD(recentHistory);
-				decimal priceChangeWindow = IndicatorCalculations.CalculatePriceChange(recentHistory);
-
-				// Calculate Bollinger Bands
-				var (middleBand, upperBand, lowerBand) = IndicatorCalculations.CalculateBollingerBands(recentHistory, recentHistory.Count);
-
-				// Calculate ATR (assuming high, low, and close prices are available)
-				decimal atr = IndicatorCalculations.CalculateATR(recentHistory, recentHistory.Count);
-
-				// Calculate volatility
-				decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, recentHistory.Count);
-				var (adjustedStopLoss, adjustedProfitTaking) = AdjustThresholdsBasedOnVolatility(volatility);
-
-				table.AddRow("Current Price", $"[bold green]${coin.Value:N2}[/]");
-				table.AddRow("First Price Timestamp", $"[bold green]{earliestTimestamp:yyyy-MM-dd HH:mm:ss}[/]");
-				table.AddRow("Last Price Timestamp", $"[bold green]{recentHistoryData.Last().Timestamp:yyyy-MM-dd HH:mm:ss}[/]");
-				table.AddRow("Time span", $"[bold green]{(recentHistoryData.Last().Timestamp - recentHistoryData.First().Timestamp).ToString()}[/]");
-
-				string periodsIncludedColor = recentHistory.Count < customPeriods ? "red" : "green";
-				table.AddRow("Periods included", $"[bold {periodsIncludedColor}]{recentHistory.Count()}/{customPeriods}[/]");
-
-				string priceChangeColor = priceChangeWindow >= 0 ? "green" : "red";
-				table.AddRow($"Price Change", $"[bold {priceChangeColor}]{priceChangeWindow:N2}%[/]");
-
-				table.AddRow($"RSI ({recentHistory.Count})", $"[bold green]{rsi:N2}[/]");
-				table.AddRow($"SMA ({recentHistory.Count})", $"[bold green]${sma:N2}[/]");
-				table.AddRow($"EMA ({recentHistory.Count})", $"[bold green]${ema:N2}[/]");
-
-				table.AddRow("MACD", $"[bold green]${macd:N2}[/]");
-				table.AddRow("Best Short Period", $"[bold green]{bestShortPeriod}[/]");
-				table.AddRow("Best Long Period", $"[bold green]{bestLongPeriod}[/]");
-				table.AddRow("Best Signal Period", $"[bold green]{bestSignalPeriod}[/]");
-
-				table.AddRow("Bollinger Bands", $"[bold green]Middle: {middleBand:N2}, Upper: {upperBand:N2}, Lower: {lowerBand:N2}[/]");
-				table.AddRow("ATR", $"[bold green]{atr:N2}[/]");
-
-				table.AddRow("Volatility", $"[bold green]{volatility:P2}[/]");
-				table.AddRow("Adjusted Stop-Loss Threshold", $"[bold green]{adjustedStopLoss:P2}[/]");
-				table.AddRow("Adjusted Profit-Taking Threshold", $"[bold green]{adjustedProfitTaking:P2}[/]");
-
-				// Alert logic for Bollinger Bands
-				if (coin.Value > upperBand)
-				{
-					table.AddRow("Alert", $"[bold red]{coin.Key.ToUpper()} price crossed above the upper Bollinger Band![/]");
-				}
-				else if (coin.Value < lowerBand)
-				{
-					table.AddRow("Alert", $"[bold red]{coin.Key.ToUpper()} price crossed below the lower Bollinger Band![/]");
-				}
-
-				// Alert logic for ATR
-				decimal atrThreshold = 0.05m; // Example threshold for ATR
-				if (atr > atrThreshold)
-				{
-					table.AddRow("Alert", $"[bold red]{coin.Key.ToUpper()} ATR value is high, indicating high volatility![/]");
-				}
-
-				// Market sentiment analysis
-				string sentiment = "NEUTRAL";
-				if (rsi < 30) sentiment = "OVERSOLD";
-				else if (rsi > 70) sentiment = "OVERBOUGHT";
-
-				table.AddRow("Market Sentiment", $"[bold green]{sentiment}[/]");
-
-				// Use the machine learning model to predict future price
-				try
-				{
-					var cryptoData = new CryptoData
-					{
-						Price = (float)coin.Value,
-						SMA = (float)sma,
-						EMA = (float)ema,
-						RSI = (float)rsi,
-						MACD = (float)macd
-					};
-
-					float? predictedPrice = _mlService?.Predict(cryptoData);
-					table.AddRow("Predicted Price", $"[bold green]${predictedPrice:N2}[/]");
-				}
-				catch (Exception ex)
-				{
-					table.AddRow("Prediction", $"[bold red]Error: {ex.Message}[/]");
-				}
-
-				AnsiConsole.Write(table);
-
-				var operationsTable = new Table();
-				operationsTable.AddColumn("Operation");
-				operationsTable.AddColumn("Details");
-
-				if (!analysisOnly && operationsAllowed)
-				{
-					// Stop-loss and profit-taking strategy
-					if (_runtimeContext.Portfolio.ContainsKey(coin.Key) && _runtimeContext.Portfolio[coin.Key] > 0)
-					{
-						decimal initialInvestment = _runtimeContext.InitialInvestments.ContainsKey(coin.Key) ? _runtimeContext.InitialInvestments[coin.Key] : 0;
-						decimal currentValue = _runtimeContext.Portfolio[coin.Key] * coin.Value;
-						decimal fee = currentValue * _settingsService.Settings.TransactionFeeRate;
-						decimal profitOrLoss = (currentValue - initialInvestment - fee) / initialInvestment;
-
-						if (profitOrLoss <= adjustedStopLoss)
-						{
-							operationsTable.AddRow("STOP-LOSS", $"[bold red]Selling {coin.Key.ToUpper()} to prevent further loss.[/]");
-							var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
-							foreach (var result in sellResult)
-							{
-								operationsTable.AddRow("SELL Result", result);
-							}
-							operationPerfomed = true;
-						}
-						else if (profitOrLoss >= adjustedProfitTaking)
-						{
-							operationsTable.AddRow("PROFIT-TAKING", $"[bold green]Selling {coin.Key.ToUpper()} to secure profit.[/]");
-							var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
-							foreach (var result in sellResult)
-							{
-								operationsTable.AddRow("SELL Result", result);
-							}
-							operationPerfomed = true;
-						}
-					}
-
-					// Trailing Stop-Loss
-					UpdateTrailingStopLoss(coin.Key, coin.Value, _settingsService.Settings.TrailingStopLossPercentage);
-					decimal trailingStopLoss = _databaseService.GetTrailingStopLoss(coin.Key) ?? decimal.MaxValue;
-					if (coin.Value <= trailingStopLoss)
-					{
-						operationsTable.AddRow("TRAILING STOP-LOSS", $"[bold red]Selling {coin.Key.ToUpper()} due to trailing stop-loss.[/]");
-						var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
-						foreach (var result in sellResult)
-						{
-							operationsTable.AddRow("SELL Result", result);
-						}
-						operationPerfomed = true;
-					}
-
-					// Dollar-Cost Averaging (DCA)
-					string[] dollarCostAveraging = ExecuteDCA(coin.Key, _settingsService.Settings.DollarCostAveragingAmount, coin.Value, TimeSpan.FromSeconds(_settingsService.Settings.DollarCostAveragingSecondsInterval));
-					foreach (var result in dollarCostAveraging)
-					{
-						operationsTable.AddRow("DollarCostAveraging", result);
-						operationPerfomed = true;
-					}
-
-					// Trading signals with confidence levels
-					if (rsi < 30 && coin.Value < sma && coin.Value < ema && macd < 0 && coin.Value < lowerBand && atr > 0)
-					{
-						decimal confidence = (30 - rsi) / 30 * 100;
-						operationsTable.AddRow("BUY Signal", $"[bold green]Confidence: {confidence:N2}%[/]");
-
-						if (_runtimeContext.Balance > 0)
-						{
-							if (operationsAllowed)
-							{
-								var buyResult = _tradeOperations.Buy(coin.Key, null, coin.Value);
-								foreach (var result in buyResult)
-								{
-									operationsTable.AddRow("BUY Result", result);
-								}
-								operationPerfomed = true;
-							}
-							else
-							{
-								operationsTable.AddRow("BUY Operation", $"[bold red]Skipping buy operation because analysis is not valid.[/]");
-							}
-						}
-					}
-					else if (rsi > 70 && _runtimeContext.Portfolio.ContainsKey(coin.Key) && _runtimeContext.Portfolio[coin.Key] > 0 && coin.Value > sma && coin.Value > ema && macd > 0 && coin.Value > upperBand && atr > 0)
-					{
-						decimal confidence = (rsi - 70) / 30 * 100;
-						operationsTable.AddRow("SELL Signal", $"[bold cyan]Confidence: {confidence:N2}%[/]");
-
-						if (operationsAllowed)
-						{
-							var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
-							foreach (var result in sellResult)
-							{
-								operationsTable.AddRow("SELL Result", result);
-							}
-							operationPerfomed = true;
-						}
-						else
-						{
-							operationsTable.AddRow("SELL Operation", $"[bold red]Skipping sell operation because analysis is not valid.[/]");
-						}
-					}
-
-					if (operationsTable.Rows.Count > 0)
-					{
-						AnsiConsole.Write(operationsTable);
-					}
-				}
-			}
-
-			if (operationPerfomed)
-			{
-				AnsiConsole.MarkupLine($"\n[bold cyan]Current balance[/]:");
-				ShowBalance(prices, true, false);
-			}
-
-			AnsiConsole.MarkupLine($"\n[bold yellow]=== End of Analysis - Period Counter: {_runtimeContext.CurrentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
-		}
-
-		public void UpdateTrailingStopLoss(string coin, decimal currentPrice, decimal trailingPercentage)
-		{
-			decimal? stopLoss = _databaseService.GetTrailingStopLoss(coin);
-			if (!stopLoss.HasValue)
-			{
-				stopLoss = currentPrice * (1 - trailingPercentage);
-				_databaseService.SaveTrailingStopLoss(coin, stopLoss.Value);
-			}
-			else
-			{
-				decimal newStopLoss = currentPrice * (1 - trailingPercentage);
-				if (newStopLoss > stopLoss.Value)
-				{
-					_databaseService.SaveTrailingStopLoss(coin, newStopLoss);
-				}
-			}
-		}
-
-		public string[] ExecuteDCA(string coin, decimal amount, decimal currentPrice, TimeSpan interval)
-		{
-			DateTime? lastPurchaseTime = _databaseService.GetLastPurchaseTime(coin);
-			if (!lastPurchaseTime.HasValue || (DateTime.UtcNow - lastPurchaseTime.Value) >= interval)
-			{
-				decimal quantity = amount / currentPrice;
-				var buyResult = _tradeOperations.Buy(coin, quantity, currentPrice);
-				_databaseService.SaveDCAConfig(coin, DateTime.UtcNow);
-
-				return buyResult;
-			}
-
-			return new string[] { };
-		}
-
-		private (decimal stopLossThreshold, decimal profitTakingThreshold) AdjustThresholdsBasedOnVolatility(decimal volatility)
-		{
-			decimal baseStopLoss = _settingsService.Settings.StopLossThreshold;
-			decimal baseProfitTaking = _settingsService.Settings.ProfitTakingThreshold;
-
-			// Adjust thresholds based on volatility
-			decimal adjustedStopLoss = baseStopLoss * (1 + volatility);
-			decimal adjustedProfitTaking = baseProfitTaking * (1 + volatility);
-
-			return (adjustedStopLoss, adjustedProfitTaking);
 		}
 	}
 }

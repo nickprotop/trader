@@ -1,6 +1,7 @@
 using System;
 using System.Data.SQLite;
 using trader.Models;
+using Trader;
 
 namespace trader.Services
 {
@@ -373,6 +374,46 @@ namespace trader.Services
 			}
 
 			return historicalData;
+		}
+
+		public void StoreIndicatorsInDatabase(Dictionary<string, decimal> prices)
+		{
+			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
+			{
+				conn.Open();
+				foreach (var coin in prices)
+				{
+					var recentHistory = GetRecentPrices(coin.Key, 60);
+
+					List<decimal> recentPrices = recentHistory.Select(pt => pt.Price).ToList();
+
+					decimal rsi = IndicatorCalculations.CalculateRSI(recentPrices, recentHistory.Count);
+					decimal sma = IndicatorCalculations.CalculateSMA(recentPrices, recentHistory.Count);
+					decimal ema = IndicatorCalculations.CalculateEMASingle(recentPrices, recentHistory.Count);
+					var (macd, _, _, _) = IndicatorCalculations.CalculateMACD(recentPrices);
+					var (bollingerUpper, bollingerLower, _) = IndicatorCalculations.CalculateBollingerBands(recentPrices, recentPrices.Count);
+					decimal atr = IndicatorCalculations.CalculateATR(recentPrices, recentPrices.Count);
+					decimal volatility = IndicatorCalculations.CalculateVolatility(recentPrices, recentPrices.Count);
+
+					string insertQuery = @"
+					INSERT INTO Prices (name, price, rsi, sma, ema, macd, bollingerUpper, bollingerLower, atr, volatility)
+					VALUES (@name, @price, @rsi, @sma, @ema, @macd, @bollingerUpper, @bollingerLower, @atr, @volatility);";
+					using (var cmd = new SQLiteCommand(insertQuery, conn))
+					{
+						cmd.Parameters.AddWithValue("@name", coin.Key);
+						cmd.Parameters.AddWithValue("@price", coin.Value);
+						cmd.Parameters.AddWithValue("@rsi", rsi);
+						cmd.Parameters.AddWithValue("@sma", sma);
+						cmd.Parameters.AddWithValue("@ema", ema);
+						cmd.Parameters.AddWithValue("@macd", macd);
+						cmd.Parameters.AddWithValue("@bollingerUpper", bollingerUpper);
+						cmd.Parameters.AddWithValue("@bollingerLower", bollingerLower);
+						cmd.Parameters.AddWithValue("@atr", atr);
+						cmd.Parameters.AddWithValue("@volatility", volatility);
+						cmd.ExecuteNonQuery();
+					}
+				}
+			}
 		}
 	}
 }

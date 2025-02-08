@@ -13,5 +13,6 @@ namespace trader.Services
 		public void SaveDCAConfig(string coin, DateTime lastPurchaseTime);
 		public void SaveTrailingStopLoss(string coin, decimal stopLoss);
 		public decimal? GetTrailingStopLoss(string coin);
+		public void StoreIndicatorsInDatabase(Dictionary<string, decimal> prices);
 	}
 }

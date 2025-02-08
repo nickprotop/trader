@@ -19,6 +19,7 @@ namespace Trader
 							.AddSingleton<IMachineLearningService, MachineLearningService>()
 							.AddSingleton<IDatabaseService, DatabaseService>()
 							.AddSingleton<ISettingsService, SettingsService>()
+							.AddSingleton<IAnalyzer, Analyzer>()
 							.AddScoped<RuntimeContext>()
 							.AddScoped<Trader>());
 

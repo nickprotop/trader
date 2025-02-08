@@ -6,7 +6,7 @@ namespace trader.Services
 {
 	public interface IMachineLearningService
 	{
-		void TrainModel(List<CryptoData> trainingData);
+		public void TrainModel();
 		void SaveModel(string modelPath);
 		void LoadModel(string modelPath);
 		float Predict(CryptoData input);

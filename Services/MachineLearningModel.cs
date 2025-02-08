@@ -13,8 +13,49 @@ namespace trader.Services
 	{
 		private static MLContext mlContext = new MLContext();
 		private static ITransformer? model;
+		private readonly IDatabaseService _databaseService;
 
-		public void TrainModel(List<CryptoData> trainingData)
+		public MachineLearningService(IDatabaseService databaseService)
+		{
+			_databaseService = databaseService;
+		}
+
+		public void TrainModel()
+		{
+			try
+			{
+				var historicalData = _databaseService.LoadHistoricalData();
+
+				// AnsiConsole.MarkupLine($"> Training AI model. Please wait.");
+
+				// Prepare the training data
+				historicalData = historicalData.Where(h => !(h.RSI == 0 && h.EMA == 0 && h.SMA == 0 && h.MACD == 0)).ToList();
+
+				var trainingData = historicalData.Select(h => new CryptoData
+				{
+					Price = (float)h.Price,
+					SMA = (float)h.SMA,
+					EMA = (float)h.EMA,
+					RSI = (float)h.RSI,
+					MACD = (float)h.MACD,
+					BollingerUpper = (float)h.BollingerUpper,
+					BollingerLower = (float)h.BollingerLower,
+					ATR = (float)h.ATR,
+					Volatility = (float)h.Volatility,
+					Label = (float)h.Price
+				}).ToList();
+				TrainModel(trainingData);
+
+				SaveModel("model.zip");
+				AnsiConsole.MarkupLine($"[green]> Model trained and saved successfully![/]");
+			}
+			catch (Exception ex)
+			{
+				AnsiConsole.MarkupLine($"[red]> Error: {ex.Message}[/]");
+			}
+		}
+
+		private void TrainModel(List<CryptoData> trainingData)
 		{
 			// Validate training data and log non-finite values
 			foreach (var data in trainingData)
