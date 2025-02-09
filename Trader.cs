@@ -52,11 +52,12 @@ namespace Trader
 			{ Window.Balance, new string[] { "Balance and Portfolio" } },
 			{ Window.Transactions, new string[] { "Transaction History" } },
 			{ Window.Operations, new string[] { "Operations" } },
-			{ Window.Statistics, new string[] { "Database Statistics" } }
+			{ Window.Statistics, new string[] { "Database Statistics" } },
+			{ Window.Settings, new string[] { "" } }
 		};
 
 		private enum Window
-		{ MainMenu, LiveAnalysis, Balance, Transactions, Statistics, Operations }
+		{ MainMenu, LiveAnalysis, Balance, Transactions, Statistics, Operations, Settings }
 
 		public Trader(
 			IAnalyzer analyzer,
@@ -153,7 +154,7 @@ namespace Trader
 									_databaseService.StoreIndicatorsInDatabase(prices);
 									 analyzerOperationsPerfomed = _analyzer.AnalyzeIndicators(_settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
 
-									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds)} seconds... ===[/]");
+									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds).ToString("G")} seconds... ===[/]");
 								}
 							});
 
@@ -270,6 +271,10 @@ namespace Trader
 					ActivateWindow(Window.Operations);
 					handled = true;
 					break;
+				case ConsoleKey.E:
+					ActivateWindow(Window.Settings);
+					handled = true;
+					break;
 				case ConsoleKey.Q:
 					AnsiConsole.Clear();
 
@@ -293,7 +298,18 @@ namespace Trader
 					case Window.Operations:
 						HandleOperationsKeyPress(key);
 						break;
+					case Window.Settings:
+						HandleSettingsKeyPress(key);
+						break;
 				}
+			}
+		}
+
+		private void HandleSettingsKeyPress(ConsoleKey key)
+		{
+			if (key == ConsoleKey.D)
+			{
+				EditSettings();
 			}
 		}
 
@@ -383,18 +399,6 @@ namespace Trader
 				}
 
 				DrawScrollableContent(Window.MainMenu, true, true);
-			}
-
-			if (key == ConsoleKey.P)
-			{
-				lock (consoleLock)
-				{
-					AddContentToExistingWindow(Window.MainMenu, CaptureAnsiConsoleMarkup(() =>
-					{
-						PrintProgramParameters();
-					}));
-					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
-				}
 			}
 		}
 
@@ -591,7 +595,7 @@ namespace Trader
 			switch (window)
 			{
 				case Window.MainMenu:
-					subMenuText = "[cyan]R[/][red]eset database[/] | Retrain A[cyan]I[/] model | Startup [cyan]P[/]arameters | Price [bold cyan]H[/]istory";
+					subMenuText = "[cyan]R[/][red]eset database[/] | Retrain A[cyan]I[/] model | Price [bold cyan]H[/]istory";
 					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 					break;
 
@@ -634,6 +638,15 @@ namespace Trader
 						ShowTransactionHistory(sortColumn, sortOrder, showAllRecords, recordsPerPage);
 					});
 
+					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
+					break;
+
+				case Window.Settings:
+					subMenuText = "E[cyan]d[/]it Settings";
+					contentList[Window.Settings] = CaptureAnsiConsoleMarkup(() =>
+					{
+						ShowSettings();
+					});
 					scrollPosition = Math.Max(contentList[currentWindow].Length - visibleItems, 0);
 					break;
 
@@ -771,7 +784,7 @@ namespace Trader
 			Console.SetCursorPosition(0, 0);
 			AnsiConsole.Write(
 				new Panel(
-						$"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis ({_runtimeContext.CurrentPeriodIndex}) | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold cyan]O[/]perations | [bold green]Time: {DateTime.Now:HH:mm:ss}[/]\nSubmenu: {subMenuText}")
+						$"[bold cyan]M[/]ain | Live [bold cyan]A[/]nalysis ({_runtimeContext.CurrentPeriodIndex}) | [bold cyan]B[/]alance | [bold cyan]S[/]tatistics | [bold cyan]T[/]ransactions | [bold cyan]O[/]perations | S[bold cyan]e[/]ttings | [bold green]Time: {DateTime.UtcNow:HH:mm:ss} UTC[/]\nSubmenu: {subMenuText}")
 					.Header("| [blue]Crypto Trading Bot[/] |")
 					.RoundedBorder()
 					.Expand()
@@ -897,29 +910,139 @@ namespace Trader
 			}
 		}
 
-		private void PrintProgramParameters()
+		private void ShowSettings()
 		{
-			AnsiConsole.MarkupLine("\n[bold cyan]Startup Parameters[/]\n");
+			var settings = _settingsService.Settings;
 
 			var table = new Table();
-			table.AddColumn(new TableColumn("[bold yellow]Parameter[/]").LeftAligned());
-			table.AddColumn(new TableColumn("[bold yellow]Value[/]").LeftAligned());
+			table.AddColumn("Setting");
+			table.AddColumn("Value");
 
-			table.AddRow("[bold cyan]API URL[/]", _settingsService.Settings.API_URL);
-			table.AddRow("[bold cyan]Database Path[/]", _settingsService.Settings.DbPath);
-			table.AddRow("[bold cyan]Period interval (Seconds)[/]", _settingsService.Settings.CustomIntervalSeconds.ToString());
-			table.AddRow("[bold cyan]Analyze Periods/seconds[/]", $"{_settingsService.Settings.CustomPeriods}/{_settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods}");
-			table.AddRow("[bold cyan]Stop-Loss Threshold[/]", _settingsService.Settings.StopLossThreshold.ToString("P"));
-			table.AddRow("[bold cyan]Profit-Taking Threshold[/]", _settingsService.Settings.ProfitTakingThreshold.ToString("P"));
-			table.AddRow("[bold cyan]Starting Balance[/]", _settingsService.Settings.StartingBalance.ToString("C"));
-			table.AddRow("[bold cyan]Max Investment Per Coin[/]", _settingsService.Settings.MaxInvestmentPerCoin.ToString("C"));
-			table.AddRow("[bold cyan]Transaction Fee Rate[/]", _settingsService.Settings.TransactionFeeRate.ToString("P"));
-			table.AddRow("[bold cyan]Trailing stop loss percentage[/]", _settingsService.Settings.TrailingStopLossPercentage.ToString("P"));
-			table.AddRow("[bold cyan]Dollar cost averaging amount[/]", _settingsService.Settings.DollarCostAveragingAmount.ToString("C"));
-			table.AddRow("[bold cyan]Dollar cost averaging time interval (seconds)[/]", _settingsService.Settings.DollarCostAveragingSecondsInterval.ToString());
+			table.AddRow("API URL", settings.API_URL);
+			table.AddRow("Database Path", settings.DbPath);
+			table.AddRow("Custom Interval Seconds", settings.CustomIntervalSeconds.ToString());
+			table.AddRow("Custom Periods", settings.CustomPeriods.ToString());
+			table.AddRow("Stop Loss Threshold", settings.StopLossThreshold.ToString("P"));
+			table.AddRow("Profit Taking Threshold", settings.ProfitTakingThreshold.ToString("P"));
+			table.AddRow("Max Investment Per Coin", settings.MaxInvestmentPerCoin.ToString("C"));
+			table.AddRow("Starting Balance", settings.StartingBalance.ToString("C"));
+			table.AddRow("Transaction Fee Rate", settings.TransactionFeeRate.ToString("P"));
+			table.AddRow("Trailing Stop Loss Percentage", settings.TrailingStopLossPercentage.ToString("P"));
+			table.AddRow("Dollar Cost Averaging Amount", settings.DollarCostAveragingAmount.ToString("C"));
+			table.AddRow("Dollar Cost Averaging Seconds Interval", settings.DollarCostAveragingSecondsInterval.ToString());
+			table.AddRow("Check For Valid Time Interval To Perform Analysis", settings.CheckForValidTimeIntervalToPerformAnalysis.ToString());
 
 			AnsiConsole.Write(table);
 		}
+
+		private void EditSettings()
+		{
+			var settings = _settingsService.Settings;
+
+			ClearContentArea();
+
+			settings.API_URL = AnsiConsole.Prompt(
+				new TextPrompt<string>("API URL:")
+					.DefaultValue(settings.API_URL)
+					.Validate(url => Uri.IsWellFormedUriString(url, UriKind.Absolute) ? ValidationResult.Success() : ValidationResult.Error("[red]Invalid URL format.[/]"))
+			);
+
+			settings.DbPath = AnsiConsole.Prompt(
+				new TextPrompt<string>("Database Path:")
+					.DefaultValue(settings.DbPath)
+					.Validate(path => !string.IsNullOrWhiteSpace(path) ? ValidationResult.Success() : ValidationResult.Error("[red]Database path cannot be empty.[/]"))
+			);
+
+			settings.CustomIntervalSeconds = AnsiConsole.Prompt(
+				new TextPrompt<int>("Custom Interval Seconds:")
+					.DefaultValue(settings.CustomIntervalSeconds)
+					.Validate(seconds => seconds > 0 ? ValidationResult.Success() : ValidationResult.Error("[red]Interval seconds must be greater than zero.[/]"))
+			);
+
+			settings.CustomPeriods = AnsiConsole.Prompt(
+				new TextPrompt<int>("Custom Periods:")
+					.DefaultValue(settings.CustomPeriods)
+					.Validate(periods => periods > 0 ? ValidationResult.Success() : ValidationResult.Error("[red]Periods must be greater than zero.[/]"))
+			);
+
+			settings.StopLossThreshold = AnsiConsole.Prompt(
+				new TextPrompt<decimal>("Stop Loss Threshold:")
+					.DefaultValue(settings.StopLossThreshold)
+					.Validate(threshold => threshold >= 0 && threshold <= 1 ? ValidationResult.Success() : ValidationResult.Error("[red]Threshold must be between 0 and 1.[/]"))
+			);
+
+			settings.ProfitTakingThreshold = AnsiConsole.Prompt(
+				new TextPrompt<decimal>("Profit Taking Threshold:")
+					.DefaultValue(settings.ProfitTakingThreshold)
+					.Validate(threshold => threshold >= 0 && threshold <= 1 ? ValidationResult.Success() : ValidationResult.Error("[red]Threshold must be between 0 and 1.[/]"))
+			);
+
+			settings.MaxInvestmentPerCoin = AnsiConsole.Prompt(
+				new TextPrompt<decimal>("Max Investment Per Coin:")
+					.DefaultValue(settings.MaxInvestmentPerCoin)
+					.Validate(investment => investment > 0 ? ValidationResult.Success() : ValidationResult.Error("[red]Investment must be greater than zero.[/]"))
+			);
+
+			settings.StartingBalance = AnsiConsole.Prompt(
+				new TextPrompt<decimal>("Starting Balance:")
+					.DefaultValue(settings.StartingBalance)
+					.Validate(balance => balance >= 0 ? ValidationResult.Success() : ValidationResult.Error("[red]Balance must be non-negative.[/]"))
+			);
+
+			settings.TransactionFeeRate = AnsiConsole.Prompt(
+				new TextPrompt<decimal>("Transaction Fee Rate:")
+					.DefaultValue(settings.TransactionFeeRate)
+					.Validate(rate => rate >= 0 && rate <= 1 ? ValidationResult.Success() : ValidationResult.Error("[red]Fee rate must be between 0 and 1.[/]"))
+			);
+
+			settings.TrailingStopLossPercentage = AnsiConsole.Prompt(
+				new TextPrompt<decimal>("Trailing Stop Loss Percentage:")
+					.DefaultValue(settings.TrailingStopLossPercentage)
+					.Validate(percentage => percentage >= 0 && percentage <= 1 ? ValidationResult.Success() : ValidationResult.Error("[red]Percentage must be between 0 and 1.[/]"))
+			);
+
+			settings.DollarCostAveragingAmount = AnsiConsole.Prompt(
+				new TextPrompt<decimal>("Dollar Cost Averaging Amount:")
+					.DefaultValue(settings.DollarCostAveragingAmount)
+					.Validate(amount => amount > 0 ? ValidationResult.Success() : ValidationResult.Error("[red]Amount must be greater than zero.[/]"))
+			);
+
+			settings.DollarCostAveragingSecondsInterval = AnsiConsole.Prompt(
+				new TextPrompt<int>("Dollar Cost Averaging Seconds Interval:")
+					.DefaultValue(settings.DollarCostAveragingSecondsInterval)
+					.Validate(interval => interval > 0 ? ValidationResult.Success() : ValidationResult.Error("[red]Interval must be greater than zero.[/]"))
+			);
+
+			settings.CheckForValidTimeIntervalToPerformAnalysis = AnsiConsole.Confirm(
+				"Check For Valid Time Interval To Perform Analysis:",
+				settings.CheckForValidTimeIntervalToPerformAnalysis
+			);
+
+			// Confirmation prompt before saving
+			bool saveChanges = AnsiConsole.Confirm("[bold yellow]Do you want to save the changes?[/]");
+
+			contentList[Window.Settings] = new string[0];
+
+			if (saveChanges)
+			{
+				_settingsService.SaveSettings();
+				AddContentToExistingWindow(Window.Settings, ConvertToMarkup(new List<string> { "[bold green]> Settings saved successfully.[/]" }));
+				
+				AddContentToExistingWindow(Window.Settings, ConvertToMarkup(new List<string> { "> New Settings" }));
+
+				AddContentToExistingWindow(Window.Settings, CaptureAnsiConsoleMarkup(() =>
+				{
+					ShowSettings();
+				}));				
+			}
+			else
+			{
+				AddContentToExistingWindow(Window.Settings, ConvertToMarkup(new List<string> { "[bold yellow]> Changes discarded.[/]" }));
+			}
+
+			DrawScrollableContent(Window.Settings, true, true);
+		}
+
 
 		private void ResetDatabase()
 		{

@@ -230,15 +230,18 @@ namespace trader.Services
 					decimal trailingStopLoss = _databaseService.GetTrailingStopLoss(coin) ?? decimal.MaxValue;
 					if (currentPrice <= trailingStopLoss)
 					{
-						var message = $"[bold red]Selling {coin.ToUpper()} due to trailing stop-loss.[/]";
-						
-						operationsPerformed.Add($"TRAILING STOP-LOSS: {message}");
-						operationsTable.AddRow("TRAILING STOP-LOSS", message);
-						var sellResult = _tradeOperations.Sell(coin, currentPrice);
-						foreach (var result in sellResult)
+						if (_runtimeContext.Portfolio.ContainsKey(coin) && _runtimeContext.Portfolio[coin] > 0)
 						{
-							operationsPerformed.Add($"TRAILING STOP-LOSS: SELL Result: {result}");
-							operationsTable.AddRow("SELL Result", result);
+							var message = $"[bold red]Selling {coin.ToUpper()} due to trailing stop-loss.[/]";
+
+							operationsPerformed.Add($"TRAILING STOP-LOSS: {message}");
+							operationsTable.AddRow("TRAILING STOP-LOSS", message);
+							var sellResult = _tradeOperations.Sell(coin, currentPrice);
+							foreach (var result in sellResult)
+							{
+								operationsPerformed.Add($"TRAILING STOP-LOSS: SELL Result: {result}");
+								operationsTable.AddRow("SELL Result", result);
+							}
 						}
 					}
 

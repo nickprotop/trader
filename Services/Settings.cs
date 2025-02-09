@@ -2,7 +2,7 @@ namespace trader.Services
 {
 	public class Settings
 	{
-		public int CustomIntervalSeconds { get; set; } = 30;
+		public int CustomIntervalSeconds { get; set; } = 20;
 		public int CustomPeriods { get; set; } = 60;
 		public string API_URL { get; set; } = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,cardano&vs_currencies=usd";
 		public string DbPath { get; set; } = "crypto_prices.db";
