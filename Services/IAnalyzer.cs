@@ -8,7 +8,7 @@ namespace trader.Services
 {
 	public interface IAnalyzer
 	{
-		public List<string> AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds, bool analysisOnly);
+		public List<string> AnalyzeIndicators(int customPeriods, int analysisWindowSeconds, bool analysisOnly);
 
 	}
 }

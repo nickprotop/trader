@@ -16,12 +16,6 @@ using trader.Services;
 
 namespace Trader
 {
-	enum PriceSource
-	{
-		coingecko = 1,
-		coinbase =2
-	}
-
 	public class Trader
 	{
 		private readonly ITradeOperations _tradeOperations;
@@ -30,6 +24,7 @@ namespace Trader
 		private readonly ISettingsService _settingsService;
 		private readonly RuntimeContext _runtimeContext;
 		private readonly IAnalyzer _analyzer;
+		private readonly ISourceService _sourceService;
 		private readonly HttpClient httpClient = new HttpClient();
 
 		private bool isRunning = true;
@@ -69,6 +64,7 @@ namespace Trader
 			IMachineLearningService mlService,
 			IDatabaseService databaseService,
 			ISettingsService settingsService,
+			ISourceService sourceService,
 			RuntimeContext runtimeContext)
 		{
 			_analyzer = analyzer;
@@ -77,6 +73,7 @@ namespace Trader
 			_databaseService = databaseService;
 			_settingsService = settingsService;
 			_runtimeContext = runtimeContext;
+			_sourceService = sourceService;
 		}
 
 		public async Task Run(string[] args)
@@ -150,11 +147,11 @@ namespace Trader
 							List<string> analyzerOperationsPerfomed = new List<string>();
 							string[] analyzerOutput = CaptureAnsiConsoleMarkup(() =>
 							{
-								prices = GetCryptoPrices(PriceSource.coingecko).Result;
+								prices = _sourceService.GetCryptoPrices(PriceSource.coingecko).Result;
 								if (prices.Count != 0)
 								{
 									_databaseService.StoreIndicatorsInDatabase(prices);
-									 analyzerOperationsPerfomed = _analyzer.AnalyzeIndicators(prices, _settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
+									 analyzerOperationsPerfomed = _analyzer.AnalyzeIndicators(_settingsService.Settings.CustomPeriods, _settingsService.Settings.CustomIntervalSeconds * _settingsService.Settings.CustomPeriods, false);
 
 									AnsiConsole.MarkupLine($"\n[bold yellow]=== Next update at {DateTime.UtcNow.AddSeconds(_settingsService.Settings.CustomIntervalSeconds)} seconds... ===[/]");
 								}
@@ -650,6 +647,11 @@ namespace Trader
 
 		public string[] ConvertToMarkup(List<string> source)
 		{
+			if (source == null || source.Count == 0)
+			{
+				return new string[0];
+			}
+
 			return CaptureAnsiConsoleMarkup(() =>
 			{
 				foreach (var line in source)
@@ -657,6 +659,19 @@ namespace Trader
 					AnsiConsole.MarkupLine(line);
 				}
 			});
+		}
+
+		public string ConvertToMarkup(string source)
+		{
+			if (string.IsNullOrEmpty(source))
+			{
+				return string.Empty;
+			}
+
+			return CaptureAnsiConsoleMarkup(() =>
+			{
+				AnsiConsole.MarkupLine(source);
+			})[0];
 		}
 
 		private void AddContentToExistingWindow(Window window, string[] newContent)
@@ -916,87 +931,6 @@ namespace Trader
 			_databaseService.InitializeRuntimeContext();
 
 			AnsiConsole.MarkupLine("[bold red]Database has been reset. Starting over...[/]");
-		}
-
-		private async Task<Dictionary<string, decimal>> GetCryptoPrices(PriceSource priceSource)
-		{
-			try
-			{
-				AnsiConsole.MarkupLine("\n[bold yellow]=== Fetching cryptocurrency prices... ===[/]");
-
-				string response;
-
-				switch (priceSource)
-				{
-					case PriceSource.coingecko:
-						response = await httpClient.GetStringAsync(_settingsService.Settings.API_URL);
-						var data = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, decimal>>>(response);
-						_runtimeContext.CurrentPrices = new Dictionary<string, decimal>();
-
-						foreach (var coin in data ?? new Dictionary<string, Dictionary<string, decimal>>())
-						{
-							string name = coin.Key;
-							decimal price = coin.Value["usd"];
-							_runtimeContext.CurrentPrices[name] = price;
-
-							if (!_runtimeContext.CachedPrices.ContainsKey(name))
-								_runtimeContext.CachedPrices[name] = new List<decimal>();
-
-							_runtimeContext.CachedPrices[name].Add(price);
-							if (_runtimeContext.CachedPrices[name].Count > _settingsService.Settings.CustomPeriods)
-								_runtimeContext.CachedPrices[name].RemoveAt(0);
-						}
-						return _runtimeContext.CurrentPrices;
-
-					case PriceSource.coinbase:
-						var coinSymbols = new List<string> { "BTC-USD", "ETH-USD", "LTC-USD" }; // Add more coin symbols as needed
-						var prices = new Dictionary<string, decimal>();
-
-						foreach (var symbol in coinSymbols)
-						{
-							response = await httpClient.GetStringAsync($"https://api.coinbase.com/v2/prices/{symbol}/spot");
-							var coinBaseData = JsonSerializer.Deserialize<CoinbasePriceResponse>(response);
-
-							if (coinBaseData != null && coinBaseData.Data != null)
-							{
-								prices[symbol.Split('-')[0]] = coinBaseData.Data.Amount;
-							}
-						}
-
-						_runtimeContext.CurrentPrices = prices;
-
-						foreach (var coin in prices)
-						{
-							if (!_runtimeContext.CachedPrices.ContainsKey(coin.Key))
-								_runtimeContext.CachedPrices[coin.Key] = new List<decimal>();
-
-							_runtimeContext.CachedPrices[coin.Key].Add(coin.Value);
-							if (_runtimeContext.CachedPrices[coin.Key].Count > _settingsService.Settings.CustomPeriods)
-								_runtimeContext.CachedPrices[coin.Key].RemoveAt(0);
-						}
-
-						return prices;
-					default:
-						return new Dictionary<string, decimal>();
-				}
-			}
-			catch (Exception ex)
-			{
-				Console.WriteLine($"Error: {ex.Message}");
-				return new Dictionary<string, decimal>();
-			}
-		}
-
-		public class CoinbasePriceResponse
-		{
-			public CoinbasePriceData Data { get; set; }
-		}
-
-		public class CoinbasePriceData
-		{
-			public string Base { get; set; }
-			public string Currency { get; set; }
-			public decimal Amount { get; set; }
 		}
 
 		private static (string column, string order) PromptForSortOptions()

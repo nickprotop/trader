@@ -33,6 +33,7 @@ namespace trader.Services
 
 				var trainingData = historicalData.Select(h => new CryptoData
 				{
+					Timestamp = h.Timestamp,
 					Price = (float)h.Price,
 					SMA = (float)h.SMA,
 					EMA = (float)h.EMA,

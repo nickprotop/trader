@@ -94,6 +94,27 @@ namespace trader.Services
 			}
 		}
 
+		public List<string> GetAllCoinNames()
+		{
+			var coinNames = new List<string>();
+			using (var conn = new SQLiteConnection($"Data Source={_settingsService.Settings.DbPath};Version=3;"))
+			{
+				conn.Open();
+				string query = "SELECT DISTINCT name FROM Prices;";
+				using (var cmd = new SQLiteCommand(query, conn))
+				{
+					using (var reader = cmd.ExecuteReader())
+					{
+						while (reader.Read())
+						{
+							coinNames.Add(reader.GetString(0));
+						}
+					}
+				}
+			}
+			return coinNames;
+		}
+
 		public List<(decimal Price, DateTime Timestamp)> GetRecentPrices(string coin, int? rowCount)
 		{
 			var recentHistory = new List<(decimal Price, DateTime Timestamp)>();
@@ -383,7 +404,8 @@ namespace trader.Services
 				conn.Open();
 				foreach (var coin in prices)
 				{
-					var recentHistory = GetRecentPrices(coin.Key, 60);
+					var recentHistory = GetRecentPrices(coin.Key, _settingsService.Settings.CustomPeriods - 1);
+					recentHistory.Add((coin.Value, DateTime.UtcNow));
 
 					List<decimal> recentPrices = recentHistory.Select(pt => pt.Price).ToList();
 

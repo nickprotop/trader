@@ -30,7 +30,7 @@ namespace trader.Services
 			_runtimeContext = runtimeContext;
 		}
 
-		public List<string> AnalyzeIndicators(Dictionary<string, decimal> prices, int customPeriods, int analysisWindowSeconds, bool analysisOnly)
+		public List<string> AnalyzeIndicators(int customPeriods, int analysisWindowSeconds, bool analysisOnly)
 		{
 			DateTime startAnalysisTimeStamp = DateTime.Now.ToUniversalTime();
 
@@ -40,16 +40,18 @@ namespace trader.Services
 
 			AnsiConsole.MarkupLine($"\n[bold yellow]=== Market Analysis Report - Period Counter: {_runtimeContext.CurrentPeriodIndex} - TimeStamp: {startAnalysisTimeStamp} ===[/]");
 
-			foreach (var coin in prices)
+			foreach (var coin in _databaseService.GetAllCoinNames())
 			{
 				bool operationsAllowed = true;
 
-				AnsiConsole.MarkupLine($"\n[bold cyan]{coin.Key.ToUpper()}[/]:");
+				AnsiConsole.MarkupLine($"\n[bold cyan]{coin.ToUpper()}[/]:");
 
-				if (!_runtimeContext.CachedPrices.ContainsKey(coin.Key))
+				if (!_runtimeContext.CurrentPrices.ContainsKey(coin))
 					continue;
 
-				var recentHistoryData = _databaseService.GetRecentPrices(coin.Key, _settingsService.Settings.CustomPeriods);
+				decimal currentPrice = _runtimeContext.CurrentPrices[coin];
+
+				var recentHistoryData = _databaseService.GetRecentPrices(coin, _settingsService.Settings.CustomPeriods);
 
 				var table = new Table();
 				table.AddColumn("Indicator");
@@ -57,7 +59,7 @@ namespace trader.Services
 
 				if (recentHistoryData.Count < 2) // Need at least 2 data points to calculate change
 				{
-					table.AddRow("Analysis Status", $"[bold red]Insufficient data points for {coin.Key} analysis.[/]");
+					table.AddRow("Analysis Status", $"[bold red]Insufficient data points for {coin} analysis.[/]");
 					AnsiConsole.Write(table);
 					continue;
 				}
@@ -66,7 +68,7 @@ namespace trader.Services
 
 				if (recentHistory.Count < customPeriods)
 				{
-					table.AddRow("Analysis Status", $"[bold red]Insufficient data points for {coin.Key} analysis.[/]");
+					table.AddRow("Analysis Status", $"[bold red]Insufficient data points for {coin} analysis.[/]");
 					operationsAllowed = false;
 				}
 
@@ -79,7 +81,7 @@ namespace trader.Services
 					int bufferSeconds = _settingsService.Settings.CustomIntervalSeconds * 2; // Buffer for capture delays
 					if (timeframe.TotalSeconds < (analysisWindowSeconds - bufferSeconds) || timeframe.TotalSeconds > (analysisWindowSeconds + bufferSeconds))
 					{
-						table.AddRow("Analysis Status", $"[bold red]Not valid timeframe for {coin.Key} analysis. Required: {analysisWindowSeconds} seconds, Available: {timeframe.TotalSeconds} seconds (including buffer of {bufferSeconds} seconds).[/]");
+						table.AddRow("Analysis Status", $"[bold red]Not valid timeframe for {coin} analysis. Required: {analysisWindowSeconds} seconds, Available: {timeframe.TotalSeconds} seconds (including buffer of {bufferSeconds} seconds).[/]");
 						AnsiConsole.Write(table);
 						continue;
 					}
@@ -101,7 +103,7 @@ namespace trader.Services
 				decimal volatility = IndicatorCalculations.CalculateVolatility(recentHistory, recentHistory.Count);
 				var (adjustedStopLoss, adjustedProfitTaking) = AdjustThresholdsBasedOnVolatility(volatility);
 
-				table.AddRow("Current Price", $"[bold green]${coin.Value:N2}[/]");
+				table.AddRow("Current Price", $"[bold green]${currentPrice:N2}[/]");
 				table.AddRow("First Price Timestamp", $"[bold green]{earliestTimestamp:yyyy-MM-dd HH:mm:ss}[/]");
 				table.AddRow("Last Price Timestamp", $"[bold green]{recentHistoryData.Last().Timestamp:yyyy-MM-dd HH:mm:ss}[/]");
 				table.AddRow("Time span", $"[bold green]{(recentHistoryData.Last().Timestamp - recentHistoryData.First().Timestamp).ToString()}[/]");
@@ -129,13 +131,13 @@ namespace trader.Services
 				table.AddRow("Adjusted Profit-Taking Threshold", $"[bold green]{adjustedProfitTaking:P2}[/]");
 
 				// Alert logic for Bollinger Bands
-				if (coin.Value > upperBand)
+				if (currentPrice > upperBand)
 				{
-					table.AddRow("Alert", $"[bold red]{coin.Key.ToUpper()} price crossed above the upper Bollinger Band![/]");
+					table.AddRow("Alert", $"[bold red]{coin.ToUpper()} price crossed above the upper Bollinger Band![/]");
 				}
-				else if (coin.Value < lowerBand)
+				else if (currentPrice < lowerBand)
 				{
-					table.AddRow("Alert", $"[bold red]{coin.Key.ToUpper()} price crossed below the lower Bollinger Band![/]");
+					table.AddRow("Alert", $"[bold red]{coin.ToUpper()} price crossed below the lower Bollinger Band![/]");
 				}
 
 				// Alert logic for ATR
@@ -157,11 +159,16 @@ namespace trader.Services
 				{
 					var cryptoData = new CryptoData
 					{
-						Price = (float)coin.Value,
+						Timestamp = DateTime.Now,
+						Price = (float)currentPrice,
 						SMA = (float)sma,
 						EMA = (float)ema,
 						RSI = (float)rsi,
-						MACD = (float)macd
+						MACD = (float)macd,
+						BollingerLower = (float)lowerBand,
+						BollingerUpper = (float)upperBand,
+						ATR = (float)atr,
+						Volatility = (float)volatility
 					};
 
 					float? predictedPrice = _mlService?.Predict(cryptoData);
@@ -181,21 +188,21 @@ namespace trader.Services
 				if (!analysisOnly && operationsAllowed)
 				{
 					// Stop-loss and profit-taking strategy
-					if (_runtimeContext.Portfolio.ContainsKey(coin.Key) && _runtimeContext.Portfolio[coin.Key] > 0)
+					if (_runtimeContext.Portfolio.ContainsKey(coin) && _runtimeContext.Portfolio[coin] > 0)
 					{
-						decimal initialInvestment = _runtimeContext.InitialInvestments.ContainsKey(coin.Key) ? _runtimeContext.InitialInvestments[coin.Key] : 0;
-						decimal currentValue = _runtimeContext.Portfolio[coin.Key] * coin.Value;
+						decimal initialInvestment = _runtimeContext.InitialInvestments.ContainsKey(coin) ? _runtimeContext.InitialInvestments[coin] : 0;
+						decimal currentValue = _runtimeContext.Portfolio[coin] * currentPrice;
 						decimal fee = currentValue * _settingsService.Settings.TransactionFeeRate;
 						decimal profitOrLoss = (currentValue - initialInvestment - fee) / initialInvestment;
 
 						if (profitOrLoss <= adjustedStopLoss)
 						{
-							string message = $"[bold red]Selling {coin.Key.ToUpper()} to prevent further loss.[/]Selling {coin.Key.ToUpper()} to prevent further loss.";
+							string message = $"[bold red]Selling {coin.ToUpper()} to prevent further loss.[/]Selling {coin.ToUpper()} to prevent further loss.";
 
 							operationsPerformed.Add($"STOP-LOSS: {message}");
 							operationsTable.AddRow("STOP-LOSS", message);
 
-							var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
+							var sellResult = _tradeOperations.Sell(coin, currentPrice);
 							foreach (var result in sellResult)
 							{
 								operationsPerformed.Add($"STOP-LOSS: SELL Result: {result}");
@@ -204,12 +211,12 @@ namespace trader.Services
 						}
 						else if (profitOrLoss >= adjustedProfitTaking)
 						{
-							string message = $"[bold green]Selling {coin.Key.ToUpper()} to secure profit.[/]";
+							string message = $"[bold green]Selling {coin.ToUpper()} to secure profit.[/]";
 
 							operationsPerformed.Add($"PROFIT-TAKING: {message}");
 							operationsTable.AddRow("PROFIT-TAKING", message);
 
-							var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
+							var sellResult = _tradeOperations.Sell(coin, currentPrice);
 							foreach (var result in sellResult)
 							{
 								operationsPerformed.Add($"PROFIT-TAKING: SELL Result: {result}");
@@ -219,15 +226,15 @@ namespace trader.Services
 					}
 
 					// Trailing Stop-Loss
-					UpdateTrailingStopLoss(coin.Key, coin.Value, _settingsService.Settings.TrailingStopLossPercentage);
-					decimal trailingStopLoss = _databaseService.GetTrailingStopLoss(coin.Key) ?? decimal.MaxValue;
-					if (coin.Value <= trailingStopLoss)
+					UpdateTrailingStopLoss(coin, currentPrice, _settingsService.Settings.TrailingStopLossPercentage);
+					decimal trailingStopLoss = _databaseService.GetTrailingStopLoss(coin) ?? decimal.MaxValue;
+					if (currentPrice <= trailingStopLoss)
 					{
-						var message = $"[bold red]Selling {coin.Key.ToUpper()} due to trailing stop-loss.[/]";
+						var message = $"[bold red]Selling {coin.ToUpper()} due to trailing stop-loss.[/]";
 						
 						operationsPerformed.Add($"TRAILING STOP-LOSS: {message}");
 						operationsTable.AddRow("TRAILING STOP-LOSS", message);
-						var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
+						var sellResult = _tradeOperations.Sell(coin, currentPrice);
 						foreach (var result in sellResult)
 						{
 							operationsPerformed.Add($"TRAILING STOP-LOSS: SELL Result: {result}");
@@ -236,7 +243,7 @@ namespace trader.Services
 					}
 
 					// Dollar-Cost Averaging (DCA)
-					string[] dollarCostAveraging = ExecuteDCA(coin.Key, _settingsService.Settings.DollarCostAveragingAmount, coin.Value, TimeSpan.FromSeconds(_settingsService.Settings.DollarCostAveragingSecondsInterval));
+					string[] dollarCostAveraging = ExecuteDCA(coin, _settingsService.Settings.DollarCostAveragingAmount, currentPrice, TimeSpan.FromSeconds(_settingsService.Settings.DollarCostAveragingSecondsInterval));
 					foreach (var result in dollarCostAveraging)
 					{
 						operationsPerformed.Add($"DollarCostAveraging: {result}");
@@ -244,7 +251,7 @@ namespace trader.Services
 					}
 
 					// Trading signals with confidence levels
-					if (rsi < 30 && coin.Value < sma && coin.Value < ema && macd < 0 && coin.Value < lowerBand && atr > 0)
+					if (rsi < 30 && currentPrice < sma && currentPrice < ema && macd < 0 && currentPrice < lowerBand && atr > 0)
 					{
 						decimal confidence = (30 - rsi) / 30 * 100;
 						operationsTable.AddRow("BUY Signal", $"[bold green]Confidence: {confidence:N2}%[/]");
@@ -253,7 +260,7 @@ namespace trader.Services
 						{
 							if (operationsAllowed)
 							{
-								var buyResult = _tradeOperations.Buy(coin.Key, null, coin.Value);
+								var buyResult = _tradeOperations.Buy(coin, null, currentPrice);
 								foreach (var result in buyResult)
 								{
 									operationsTable.AddRow("BUY Result", result);
@@ -266,12 +273,12 @@ namespace trader.Services
 							}
 						}
 					}
-					else if (rsi > 70 && _runtimeContext.Portfolio.ContainsKey(coin.Key) && _runtimeContext.Portfolio[coin.Key] > 0 && coin.Value > sma && coin.Value > ema && macd > 0 && coin.Value > upperBand && atr > 0)
+					else if (rsi > 70 && _runtimeContext.Portfolio.ContainsKey(coin) && _runtimeContext.Portfolio[coin] > 0 && currentPrice > sma && currentPrice > ema && macd > 0 && currentPrice > upperBand && atr > 0)
 					{
 						decimal confidence = (rsi - 70) / 30 * 100;
 
-						decimal initialInvestment = _runtimeContext.InitialInvestments.ContainsKey(coin.Key) ? _runtimeContext.InitialInvestments[coin.Key] : 0;
-						decimal currentValue = _runtimeContext.Portfolio[coin.Key] * coin.Value;
+						decimal initialInvestment = _runtimeContext.InitialInvestments.ContainsKey(coin) ? _runtimeContext.InitialInvestments[coin] : 0;
+						decimal currentValue = _runtimeContext.Portfolio[coin] * currentPrice;
 						decimal fee = currentValue * _settingsService.Settings.TransactionFeeRate;
 						decimal profitOrLoss = (currentValue - initialInvestment - fee) / initialInvestment;
 
@@ -285,7 +292,7 @@ namespace trader.Services
 
 						if (operationsAllowed)
 						{
-							var sellResult = _tradeOperations.Sell(coin.Key, coin.Value);
+							var sellResult = _tradeOperations.Sell(coin, currentPrice);
 							foreach (var result in sellResult)
 							{
 								operationsPerformed.Add($"SELL Signal: {result}");

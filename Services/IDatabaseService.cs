@@ -14,5 +14,6 @@ namespace trader.Services
 		public void SaveTrailingStopLoss(string coin, decimal stopLoss);
 		public decimal? GetTrailingStopLoss(string coin);
 		public void StoreIndicatorsInDatabase(Dictionary<string, decimal> prices);
+		public List<string> GetAllCoinNames();
 	}
 }

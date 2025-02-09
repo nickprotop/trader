@@ -11,6 +11,7 @@
 		public float BollingerLower { get; set; }
 		public float ATR { get; set; }
 		public float Volatility { get; set; }
+		public DateTime Timestamp { get; set; }
 		public float Label { get; set; } // The label is the target value (e.g., future price)
 
 		public override string ToString()

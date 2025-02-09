@@ -20,6 +20,7 @@ namespace Trader
 							.AddSingleton<IDatabaseService, DatabaseService>()
 							.AddSingleton<ISettingsService, SettingsService>()
 							.AddSingleton<IAnalyzer, Analyzer>()
+							.AddSingleton<ISourceService, SourceService>()	
 							.AddScoped<RuntimeContext>()
 							.AddScoped<Trader>());
 
