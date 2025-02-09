@@ -16,6 +16,12 @@ using trader.Services;
 
 namespace Trader
 {
+	enum PriceSource
+	{
+		coingecko = 1,
+		coinbase =2
+	}
+
 	public class Trader
 	{
 		private readonly ITradeOperations _tradeOperations;
@@ -144,7 +150,7 @@ namespace Trader
 							List<string> analyzerOperationsPerfomed = new List<string>();
 							string[] analyzerOutput = CaptureAnsiConsoleMarkup(() =>
 							{
-								prices = GetCryptoPrices().Result;
+								prices = GetCryptoPrices(PriceSource.coingecko).Result;
 								if (prices.Count != 0)
 								{
 									_databaseService.StoreIndicatorsInDatabase(prices);
@@ -912,36 +918,85 @@ namespace Trader
 			AnsiConsole.MarkupLine("[bold red]Database has been reset. Starting over...[/]");
 		}
 
-		private async Task<Dictionary<string, decimal>> GetCryptoPrices()
+		private async Task<Dictionary<string, decimal>> GetCryptoPrices(PriceSource priceSource)
 		{
 			try
 			{
 				AnsiConsole.MarkupLine("\n[bold yellow]=== Fetching cryptocurrency prices... ===[/]");
 
-				var response = await httpClient.GetStringAsync(_settingsService.Settings.API_URL);
-				var data = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, decimal>>>(response);
-				_runtimeContext.CurrentPrices = new Dictionary<string, decimal>();
+				string response;
 
-				foreach (var coin in data ?? new Dictionary<string, Dictionary<string, decimal>>())
+				switch (priceSource)
 				{
-					string name = coin.Key;
-					decimal price = coin.Value["usd"];
-					_runtimeContext.CurrentPrices[name] = price;
+					case PriceSource.coingecko:
+						response = await httpClient.GetStringAsync(_settingsService.Settings.API_URL);
+						var data = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, decimal>>>(response);
+						_runtimeContext.CurrentPrices = new Dictionary<string, decimal>();
 
-					if (!_runtimeContext.CachedPrices.ContainsKey(name))
-						_runtimeContext.CachedPrices[name] = new List<decimal>();
+						foreach (var coin in data ?? new Dictionary<string, Dictionary<string, decimal>>())
+						{
+							string name = coin.Key;
+							decimal price = coin.Value["usd"];
+							_runtimeContext.CurrentPrices[name] = price;
 
-					_runtimeContext.CachedPrices[name].Add(price);
-					if (_runtimeContext.CachedPrices[name].Count > _settingsService.Settings.CustomPeriods)
-						_runtimeContext.CachedPrices[name].RemoveAt(0);
+							if (!_runtimeContext.CachedPrices.ContainsKey(name))
+								_runtimeContext.CachedPrices[name] = new List<decimal>();
+
+							_runtimeContext.CachedPrices[name].Add(price);
+							if (_runtimeContext.CachedPrices[name].Count > _settingsService.Settings.CustomPeriods)
+								_runtimeContext.CachedPrices[name].RemoveAt(0);
+						}
+						return _runtimeContext.CurrentPrices;
+
+					case PriceSource.coinbase:
+						var coinSymbols = new List<string> { "BTC-USD", "ETH-USD", "LTC-USD" }; // Add more coin symbols as needed
+						var prices = new Dictionary<string, decimal>();
+
+						foreach (var symbol in coinSymbols)
+						{
+							response = await httpClient.GetStringAsync($"https://api.coinbase.com/v2/prices/{symbol}/spot");
+							var coinBaseData = JsonSerializer.Deserialize<CoinbasePriceResponse>(response);
+
+							if (coinBaseData != null && coinBaseData.Data != null)
+							{
+								prices[symbol.Split('-')[0]] = coinBaseData.Data.Amount;
+							}
+						}
+
+						_runtimeContext.CurrentPrices = prices;
+
+						foreach (var coin in prices)
+						{
+							if (!_runtimeContext.CachedPrices.ContainsKey(coin.Key))
+								_runtimeContext.CachedPrices[coin.Key] = new List<decimal>();
+
+							_runtimeContext.CachedPrices[coin.Key].Add(coin.Value);
+							if (_runtimeContext.CachedPrices[coin.Key].Count > _settingsService.Settings.CustomPeriods)
+								_runtimeContext.CachedPrices[coin.Key].RemoveAt(0);
+						}
+
+						return prices;
+					default:
+						return new Dictionary<string, decimal>();
 				}
-				return _runtimeContext.CurrentPrices;
 			}
 			catch (Exception ex)
 			{
 				Console.WriteLine($"Error: {ex.Message}");
 				return new Dictionary<string, decimal>();
 			}
+		}
+
+		public class CoinbasePriceResponse
+		{
+			public CoinbasePriceData Data { get; set; }
+		}
+
+		public class CoinbasePriceData
+		{
+			public string Base { get; set; }
+			public string Currency { get; set; }
+			public decimal Amount { get; set; }
 		}
 
 		private static (string column, string order) PromptForSortOptions()
